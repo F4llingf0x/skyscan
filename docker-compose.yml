@@ -1,0 +1,73 @@
+# SkyScan — one-command local stack:
+#   docker compose up --build
+# UI:      http://localhost:4200   (operator/password, customer/password, admin/password)
+# API:     http://localhost:8080   (Swagger: /swagger-ui.html)
+# MinIO:   http://localhost:9001   (console; skyscan / skyscan-secret)
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: skyscan
+      POSTGRES_USER: skyscan
+      POSTGRES_PASSWORD: skyscan
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skyscan"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: skyscan
+      MINIO_ROOT_PASSWORD: skyscan-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/skyscan
+      DB_USER: skyscan
+      DB_PASSWORD: skyscan
+      MINIO_ENDPOINT: http://minio:9000            # backend + engine reach MinIO on the compose network
+      MINIO_EXTERNAL_ENDPOINT: http://localhost:9000  # browser-facing presigned URLs
+      MINIO_ACCESS_KEY: skyscan
+      MINIO_SECRET_KEY: skyscan-secret
+      ENGINE_URL: http://engine:9090
+      ENGINE_CALLBACK_BASE: http://backend:8080
+      INTERNAL_TOKEN: skyscan-internal-demo-token
+      DRONE_CONNECTOR: stub                        # swap to a real connector implementation later
+      SAMPLES_DIR: /samples
+      TARGET_CRS: EPSG:32634
+    volumes:
+      - ./sample-data:/samples:ro                  # bundled sample scans used by the stub connector
+    ports: ["8080:8080"]
+
+  engine:
+    build: ./engine
+    environment:
+      ENGINE_PORT: "9090"
+      INTERNAL_TOKEN: skyscan-internal-demo-token
+    ports: ["9090:9090"]
+
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["4200:80"]
+
+volumes:
+  pgdata:
+  miniodata:

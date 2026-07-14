@@ -1,0 +1,121 @@
+/* ============================================================
+   SkyScan console — design tokens
+   Slate instrument panel · amber signal accent · mono telemetry
+   ============================================================ */
+:root {
+  --bg: #151a21;            /* panel slate */
+  --bg-raised: #1d242e;     /* raised card */
+  --bg-inset: #10141a;      /* map / viewer wells */
+  --line: #2c3644;          /* hairline */
+  --text: #e8ecf1;
+  --text-dim: #8b97a5;
+  --amber: #ffb454;         /* primary signal (crude pass, actions) */
+  --cyan: #5cc8ff;          /* detail pass */
+  --green: #7ad48a;         /* complete / ok */
+  --red: #ff6b6b;           /* failed / abort */
+  --font-ui: 'Barlow', system-ui, sans-serif;
+  --font-display: 'Barlow Condensed', var(--font-ui);
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+h1, h2, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 .5rem; }
+h1 { font-size: 1.7rem; } h2 { font-size: 1.25rem; } h3 { font-size: 1.05rem; color: var(--text-dim); }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.mono { font-family: var(--font-mono); font-size: .85rem; }
+.dim { color: var(--text-dim); }
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+}
+
+button, .btn {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: .9rem;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  color: var(--text);
+  padding: .55rem 1.1rem;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--amber); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.btn-primary { background: var(--amber); border-color: var(--amber); color: #1a1205; }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-danger { border-color: var(--red); color: var(--red); }
+
+input, select {
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  padding: .5rem .7rem;
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  width: 100%;
+}
+label { display: block; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-bottom: .25rem; }
+.field { margin-bottom: .8rem; }
+
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); padding: .5rem .6rem; border-bottom: 1px solid var(--line); }
+td { padding: .55rem .6rem; border-bottom: 1px solid var(--line); font-size: .9rem; }
+
+/* ---- flight-progress strip (signature element) ---- */
+.strip { display: flex; gap: 2px; overflow-x: auto; padding: 2px 0; }
+.strip .seg {
+  flex: 1 0 auto;
+  min-width: 84px;
+  padding: .4rem .5rem .35rem;
+  font-family: var(--font-mono);
+  font-size: .62rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  white-space: nowrap;
+}
+.strip .seg.done { color: var(--text); border-left-color: var(--green); }
+.strip .seg.now  { color: #1a1205; background: var(--amber); border-color: var(--amber); font-weight: 600; }
+.strip .seg.bad  { color: #fff; background: var(--red); border-color: var(--red); }
+
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  padding: .15rem .5rem;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.badge.amber { color: var(--amber); border-color: var(--amber); }
+.badge.cyan { color: var(--cyan); border-color: var(--cyan); }
+.badge.green { color: var(--green); border-color: var(--green); }
+.badge.red { color: var(--red); border-color: var(--red); }
+
+.leaflet-container { background: var(--bg-inset); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

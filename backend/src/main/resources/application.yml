@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: skyscan-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/skyscan}
+    username: ${DB_USER:skyscan}
+    password: ${DB_PASSWORD:skyscan}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  mvc:
+    async:
+      request-timeout: 3600000   # SSE streams stay open
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+skyscan:
+  jwt:
+    # STUB: demo secret; supply a real secret via env in any non-local deployment
+    secret: ${JWT_SECRET:c2t5c2Nhbi1kZW1vLXNlY3JldC1jaGFuZ2UtbWUtaW4tcHJvZC0hIS0zMmJ5dGVz}
+    access-ttl-minutes: 60
+    refresh-ttl-hours: 72
+  storage:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}            # backend + engine (docker network)
+    external-endpoint: ${MINIO_EXTERNAL_ENDPOINT:http://localhost:9000}  # browser-facing presigned URLs
+    access-key: ${MINIO_ACCESS_KEY:skyscan}
+    secret-key: ${MINIO_SECRET_KEY:skyscan-secret}
+    bucket: ${MINIO_BUCKET:skyscan}
+  engine:
+    url: ${ENGINE_URL:http://localhost:9090}
+    callback-base: ${ENGINE_CALLBACK_BASE:http://localhost:8080}  # how the engine reaches us
+  internal:
+    token: ${INTERNAL_TOKEN:skyscan-internal-demo-token}          # shared secret for /internal/**
+  connector:
+    # Which DroneConnector implementation to use: "stub" today, a real one later.
+    impl: ${DRONE_CONNECTOR:stub}
+  samples:
+    dir: ${SAMPLES_DIR:../sample-data}   # bundled sample scans used by the stub connector
+  processing:
+    crs: ${TARGET_CRS:EPSG:32634}
