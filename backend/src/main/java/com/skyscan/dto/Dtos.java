@@ -17,11 +17,12 @@ public final class Dtos {
     public record CreateMissionRequest(@NotBlank String name, @NotNull UUID siteId,
                                        @NotBlank String polygonGeoJson,
                                        @Positive double altitudeM, @Positive double lineSpacingM,
-                                       @Positive double speedMps) {}
+                                       @Positive double speedMps, ScanMode scanMode) {}
 
     public record RefineRequest(@NotBlank String polygonGeoJson,
                                 @Positive double altitudeM, @Positive double lineSpacingM,
-                                @Positive double speedMps, boolean terrainFollowing) {}
+                                @Positive double speedMps, boolean terrainFollowing,
+                                ScanMode scanMode, Double standoffM, Double tiltDeg) {}
 
     public record AbortRequest(String reason) {}
 
@@ -47,10 +48,10 @@ public final class Dtos {
                                  double routeLengthM, int routeLineCount, double estDurationS) {}
 
     public record MissionView(UUID id, String name, UUID siteId, String siteName, MissionState state,
-                              String lastError, Instant createdAt, Instant updatedAt) {
+                              ScanMode scanMode, String lastError, Instant createdAt, Instant updatedAt) {
         public static MissionView of(Mission m) {
             return new MissionView(m.getId(), m.getName(), m.getSite().getId(), m.getSite().getName(),
-                    m.getState(), m.getLastError(), m.getCreatedAt(), m.getUpdatedAt());
+                    m.getState(), m.getScanMode(), m.getLastError(), m.getCreatedAt(), m.getUpdatedAt());
         }
     }
 

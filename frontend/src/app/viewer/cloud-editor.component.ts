@@ -5,7 +5,7 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LasCloud } from './las-loader';
-import { geoJsonToUtmRing, utmRingToGeoJson } from '../core/geo';
+import { geoJsonToUtmRing, lonLatToUtm, utmRingToGeoJson } from '../core/geo';
 
 /**
  * Crude point-cloud EDITOR (step 2 of the refine flow).
@@ -166,15 +166,23 @@ export class CloudEditorComponent implements AfterViewInit, OnChanges, OnDestroy
     } catch { /* zone in a different CRS or malformed — skip rendering */ }
   }
 
-  /** Planned coverage route rendered as an amber ribbon at flight altitude. */
+  /**
+   * Planned route rendered as an amber ribbon. Waypoints may carry their own
+   * altitude as a 3rd coordinate (structure-mode orbit stacks); otherwise the
+   * whole route sits at routeAltitudeM above mean ground.
+   */
   private renderRoute(): void {
     if (this.routeLine) { this.overlay.remove(this.routeLine); this.routeLine = undefined; }
     if (!this.routeGeoJson) return;
     try {
       const [cx, cy] = this.cloud.center;
-      const z = this.groundZ() + this.routeAltitudeM;
-      const pts = geoJsonToUtmRing(this.crs, this.routeGeoJson)
-        .map(([e, n]) => new THREE.Vector3(e - cx, n - cy, z));
+      const ground = this.cloud.minZ - this.cloud.center[2];   // base elevation in centered frame
+      const coords: number[][] = JSON.parse(this.routeGeoJson).coordinates;
+      const pts = coords.map(c => {
+        const [e, n] = lonLatToUtm(this.crs, c[0], c[1]);
+        const alt = c.length > 2 ? c[2] : this.routeAltitudeM;
+        return new THREE.Vector3(e - cx, n - cy, ground + alt);
+      });
       this.routeLine = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(pts),
         new THREE.LineBasicMaterial({ color: 0xffb454 }));

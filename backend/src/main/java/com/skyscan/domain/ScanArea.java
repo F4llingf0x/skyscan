@@ -15,6 +15,10 @@ public class ScanArea {
     private double lineSpacingM;
     private double speedMps;
     private boolean terrainFollowing;
+    /** STRUCTURE mode: horizontal standoff from the target footprint (m). */
+    private double standoffM;
+    /** Ring tilt for this pass, degrees; FIXED for the whole flight (hardware constraint). */
+    private double tiltDeg;
     /** Planned coverage route (GeoJSON LineString, WGS84), computed by RoutePlanner. */
     @Column(columnDefinition = "text") private String routeJson;
 
@@ -33,6 +37,10 @@ public class ScanArea {
     public void setSpeedMps(double v) { speedMps = v; }
     public boolean isTerrainFollowing() { return terrainFollowing; }
     public void setTerrainFollowing(boolean v) { terrainFollowing = v; }
+    public double getStandoffM() { return standoffM; }
+    public void setStandoffM(double v) { standoffM = v; }
+    public double getTiltDeg() { return tiltDeg; }
+    public void setTiltDeg(double v) { tiltDeg = v; }
     public String getRouteJson() { return routeJson; }
     public void setRouteJson(String v) { routeJson = v; }
 }

@@ -1,0 +1,10 @@
+pymavlink>=2.4.40      # MAVLink to the Pixhawk 6C Pro (ArduPilot Copter)
+pyserial>=3.5
+rplidar-roboticia>=0.9.5   # RPLidar C1 (SLAMTEC serial protocol)
+smbus2>=0.4.3          # TCA9548A mux, AS5600 encoder, raw I2C
+vl53l1x>=0.0.5         # downward ToF rangefinder
+adafruit-circuitpython-pca9685>=3.4  # PWM board driving the DS3218 tilt servo
+requests>=2.31
+pyyaml>=6.0
+numpy>=1.24
+piexif>=1.1.3          # EXIF geotags on customer photos

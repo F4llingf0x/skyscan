@@ -26,6 +26,13 @@ public interface DroneConnector {
     /** Abort in-flight; vehicle returns to home. */
     void abortMission(UUID missionId, String reason);
 
+    /**
+     * Remote diagnostics: run the on-vehicle self-test suite (ground, props off)
+     * and report back via {@link DroneConnectorListener#onSelfTestReport}.
+     * Makes initial setup and pre-flight verification fully remote.
+     */
+    void requestSelfTest(UUID missionId);
+
     /** Backend subscribes exactly once at startup. */
     void setListener(DroneConnectorListener listener);
 

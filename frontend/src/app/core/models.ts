@@ -8,9 +8,11 @@ export type MissionState =
   | 'PREVIEW_READY' | 'DETAIL_SELECTED' | 'DETAIL_MISSION_UPLOADED' | 'DETAIL_FLYING'
   | 'DETAIL_LANDED' | 'PROCESSING' | 'COMPLETE' | 'RETURN_TO_HOME' | 'ABORTED' | 'FAILED';
 
+export type ScanMode = 'LANDSCAPE' | 'STRUCTURE';
+
 export interface Mission {
   id: string; name: string; siteId: string; siteName: string;
-  state: MissionState; lastError?: string; createdAt: string; updatedAt: string;
+  state: MissionState; scanMode: ScanMode; lastError?: string; createdAt: string; updatedAt: string;
 }
 export interface Telemetry {
   missionId: string; at: string; lat: number; lon: number; altM: number;

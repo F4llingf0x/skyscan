@@ -24,6 +24,11 @@ import { MapDrawComponent } from './map-draw.component';
           <h2>Crude pass parameters</h2>
           <div class="field"><label for="n">Mission name</label>
             <input id="n" name="n" [(ngModel)]="name"></div>
+          <div class="field"><label for="mode">Mounted payload / scan mode</label>
+            <select id="mode" name="mode" [(ngModel)]="scanMode">
+              <option value="LANDSCAPE">Landscape — downward ±30° tilt (terrain coverage)</option>
+              <option value="STRUCTURE">Structure — front-facing 360° vertical, ±30° (buildings, statues)</option>
+            </select></div>
           <div class="field"><label for="alt">Altitude (m AGL)</label>
             <input id="alt" name="alt" type="number" [(ngModel)]="altitudeM"></div>
           <div class="field"><label for="ls">Line spacing (m)</label>
@@ -52,6 +57,7 @@ export class PlannerComponent {
   site = toSignal(this.api.site(this.siteId));
   polygonGeoJson = signal('');
   name = 'Survey ' + new Date().toISOString().slice(0, 10);
+  scanMode = 'LANDSCAPE';
   altitudeM = 80;
   lineSpacingM = 25;
   speedMps = 8;
@@ -64,6 +70,7 @@ export class PlannerComponent {
       const mission = await firstValueFrom(this.api.createMission({
         name: this.name, siteId: this.siteId, polygonGeoJson: this.polygonGeoJson(),
         altitudeM: this.altitudeM, lineSpacingM: this.lineSpacingM, speedMps: this.speedMps,
+        scanMode: this.scanMode,
       }));
       await firstValueFrom(this.api.launchCrude(mission.id));
       this.router.navigate(['/missions', mission.id]);

@@ -60,10 +60,11 @@ public class MissionService implements DroneConnectorListener {
 
     @Transactional
     public Mission createMission(Site site, String name, String polygonGeoJson,
-                                 double altitudeM, double lineSpacingM, double speedMps) {
+                                 double altitudeM, double lineSpacingM, double speedMps, ScanMode scanMode) {
         Mission m = new Mission();
         m.setName(name);
         m.setSite(site);
+        m.setScanMode(scanMode == null ? ScanMode.LANDSCAPE : scanMode);
         m.setState(MissionState.IDLE);
         m = missions.save(m);
         transition(m, MissionState.AREA_SELECTED, "Crude scan area selected");
@@ -75,8 +76,10 @@ public class MissionService implements DroneConnectorListener {
         area.setAltitudeM(altitudeM);
         area.setLineSpacingM(lineSpacingM);
         area.setSpeedMps(speedMps);
+        area.setTiltDeg(-30.0);   // crude pass: ring tipped to swathe the terrain (roll mount)
         try {
-            area.setRouteJson(routePlanner.plan(polygonGeoJson, lineSpacingM, speedMps).routeGeoJson());
+            // Crude pass always flies the fixed downward lidar over the area, regardless of scan mode.
+            area.setRouteJson(routePlanner.plan(polygonGeoJson, lineSpacingM, speedMps, altitudeM).routeGeoJson());
         } catch (IllegalArgumentException e) {
             log.warn("Crude route planning skipped: {}", e.getMessage());
         }
@@ -93,14 +96,25 @@ public class MissionService implements DroneConnectorListener {
         connector.uploadMission(plan(m, area, SensorType.FIXED_3D));
     }
 
-    /** Store the refined detail zone and compute the optimal coverage route for it. */
+    /**
+     * Store the refined detail zone and compute the optimal route for it —
+     * strategy depends on the mounted payload: LANDSCAPE -> boustrophedon coverage,
+     * STRUCTURE -> stacked orbit loops around the footprint at standoff distance
+     * (altitudeM doubles as the structure's top height to cover).
+     */
     @Transactional
     public RoutePlanner.PlannedRoute submitDetailArea(UUID missionId, String polygonGeoJson,
-                                 double altitudeM, double lineSpacingM, double speedMps, boolean terrainFollowing) {
+                                 double altitudeM, double lineSpacingM, double speedMps,
+                                 boolean terrainFollowing, ScanMode scanMode, double standoffM,
+                                 double tiltDeg) {
         Mission m = get(missionId);
-        RoutePlanner.PlannedRoute route = routePlanner.plan(polygonGeoJson, lineSpacingM, speedMps);
-        transition(m, MissionState.DETAIL_SELECTED, "Detail zone refined; route planned (%d lines, %.0f m)"
-                .formatted(route.lineCount(), route.lengthM()));
+        if (scanMode != null) m.setScanMode(scanMode);   // operator can re-select the payload here
+        RoutePlanner.PlannedRoute route = m.getScanMode() == ScanMode.STRUCTURE
+                ? routePlanner.planStructure(polygonGeoJson, lineSpacingM, speedMps, standoffM, altitudeM)
+                : routePlanner.plan(polygonGeoJson, lineSpacingM, speedMps, altitudeM);
+        transition(m, MissionState.DETAIL_SELECTED, "%s route planned (%d %s, %.0f m)"
+                .formatted(m.getScanMode(), route.lineCount(),
+                        m.getScanMode() == ScanMode.STRUCTURE ? "levels" : "lines", route.lengthM()));
         ScanArea area = scanAreas.findByMissionIdAndPassType(missionId, PassType.DETAILED).orElseGet(ScanArea::new);
         area.setMission(m);
         area.setPassType(PassType.DETAILED);
@@ -109,6 +123,8 @@ public class MissionService implements DroneConnectorListener {
         area.setLineSpacingM(lineSpacingM);
         area.setSpeedMps(speedMps);
         area.setTerrainFollowing(terrainFollowing);
+        area.setStandoffM(standoffM);
+        area.setTiltDeg(tiltDeg);
         area.setRouteJson(route.routeGeoJson());
         scanAreas.save(area);
         return route;
@@ -119,8 +135,11 @@ public class MissionService implements DroneConnectorListener {
         Mission m = get(missionId);
         ScanArea area = scanAreas.findByMissionIdAndPassType(missionId, PassType.DETAILED)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No detail zone defined"));
-        transition(m, MissionState.DETAIL_MISSION_UPLOADED, "Detailed mission uploading to vehicle");
-        connector.uploadMission(plan(m, area, SensorType.SPINNING_TILTED));
+        transition(m, MissionState.DETAIL_MISSION_UPLOADED,
+                "Detailed mission uploading to vehicle (" + m.getScanMode() + " payload)");
+        SensorType detailSensor = m.getScanMode() == ScanMode.STRUCTURE
+                ? SensorType.FRONT_360_VERTICAL : SensorType.SPINNING_TILTED;
+        connector.uploadMission(plan(m, area, detailSensor));
     }
 
     @Transactional
@@ -169,6 +188,18 @@ public class MissionService implements DroneConnectorListener {
             storage.uploadFile(rawKey, upload.scanFile(), "application/octet-stream");
             Files.deleteIfExists(upload.scanFile());
 
+            // Customer photos from the onboard camera -> photos/{missionId}/
+            if (upload.photoFiles() != null) {
+                int i = 0;
+                for (java.nio.file.Path ph : upload.photoFiles()) {
+                    String key = "photos/%s/%s_%03d.jpg".formatted(
+                            m.getId(), upload.passType().name().toLowerCase(), i++);
+                    storage.uploadFile(key, ph, "image/jpeg");
+                    Files.deleteIfExists(ph);
+                }
+                if (i > 0) record(m, "INFO", "{\"photos\":" + i + "}");
+            }
+
             Acquisition acq = new Acquisition();
             acq.setMission(m);
             acq.setPassType(upload.passType());
@@ -211,6 +242,35 @@ public class MissionService implements DroneConnectorListener {
         fail(get(missionId), error);
     }
 
+    @Override
+    public void onSelfTestReport(UUID missionId, String reportJson) {
+        Mission m = get(missionId);
+        record(m, "SELFTEST", reportJson);
+        publisher.publish(missionId, "selftest", reportJson);
+        log.info("Self-test report stored for mission {}", missionId);
+    }
+
+    @Override
+    public void onFlightLog(UUID missionId, java.nio.file.Path logFile) {
+        Mission m = get(missionId);
+        try {
+            String key = "logs/%s/flight-%d.jsonl".formatted(missionId, Instant.now().getEpochSecond());
+            storage.uploadFile(key, logFile, "application/x-ndjson");
+            Files.deleteIfExists(logFile);
+            record(m, "INFO", "{\"flightLog\":\"" + key + "\"}");
+            publisher.publish(missionId, "flightlog", Map.of("key", key));
+            log.info("Flight log stored for mission {}: {}", missionId, key);
+        } catch (Exception e) {
+            log.error("Flight log storage failed for {}", missionId, e);
+        }
+    }
+
+    /** Remote diagnostics trigger — allowed in any mission state (ground checks only). */
+    public void requestSelfTest(UUID missionId) {
+        get(missionId);
+        connector.requestSelfTest(missionId);
+    }
+
     // ------------------------------------------------------------------ processing outcomes (called by ProcessingService)
 
     @Transactional
@@ -233,7 +293,7 @@ public class MissionService implements DroneConnectorListener {
     private MissionPlan plan(Mission m, ScanArea area, SensorType sensor) {
         return new MissionPlan(m.getId(), area.getPassType(), sensor, area.getPolygonGeoJson(),
                 area.getAltitudeM(), area.getLineSpacingM(), area.getSpeedMps(), area.isTerrainFollowing(),
-                area.getRouteJson());
+                area.getTiltDeg(), area.getRouteJson());
     }
 
     private void transition(Mission m, MissionState to, String note) {

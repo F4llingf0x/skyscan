@@ -18,7 +18,9 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
       <div class="head">
         <div>
           <h1>{{ m.name }}</h1>
-          <p class="dim">Site: <a [routerLink]="['/sites', m.siteId]">{{ m.siteName }}</a></p>
+          <p class="dim">Site: <a [routerLink]="['/sites', m.siteId]">{{ m.siteName }}</a>
+            · <span class="badge" [class.amber]="m.scanMode === 'LANDSCAPE'" [class.cyan]="m.scanMode === 'STRUCTURE'">
+              {{ m.scanMode === 'STRUCTURE' ? 'STRUCTURE · FRONT 360° VERTICAL' : 'LANDSCAPE · DOWNWARD ±30°' }}</span></p>
         </div>
         @if (auth.isStaff && abortable()) {
           <button class="btn-danger" (click)="abort()">Abort · return to home</button>
@@ -38,8 +40,11 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
 
       @if (canRefine()) {
         <div class="card" style="margin-top:1rem">
-          <h2>Detailed flight selector <span class="badge cyan">step 2 of 2</span></h2>
-          <p class="dim">Select the detail zone on the crude point cloud <em>or</em> on the map below — the two stay in sync. Then plan the route and launch.</p>
+          <h2>{{ isRescan() ? 'Rescan selector' : 'Detailed flight selector' }}
+            <span class="badge cyan">{{ isRescan() ? 'send the drone back' : 'step 2 of 2' }}</span></h2>
+          <p class="dim">{{ isRescan()
+            ? 'Select the area to re-scan directly on the DELIVERED point cloud (or on the map) — the drone flies back, scans it, and the new pass is merged into the deliverable.'
+            : 'Select the detail zone on the crude point cloud or on the map below — the two stay in sync. Then plan the route and launch.' }}</p>
           @if (crudeCloud(); as c) {
             <app-cloud-editor [cloud]="c" [crs]="crudeCrs()"
               [zoneGeoJson]="detailPolygon()"
@@ -85,29 +90,80 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
           @if (canRefine()) {
             <div class="card">
               <h2>Detailed pass <span class="badge cyan">plan &amp; launch</span></h2>
-              <div class="field"><label for="alt2">Altitude (m AGL)</label>
+              <div class="field"><label for="mode2">Mounted payload / scan mode</label>
+                <select id="mode2" name="mode2" [(ngModel)]="scanMode" (ngModelChange)="onModeChange()">
+                  <option value="LANDSCAPE">Landscape — downward ±30° tilt</option>
+                  <option value="STRUCTURE">Structure — front 360° vertical (buildings)</option>
+                </select></div>
+              <div class="field"><label for="alt2">{{ scanMode === 'STRUCTURE' ? 'Structure top height (m)' : 'Altitude (m AGL)' }}</label>
                 <input id="alt2" name="alt2" type="number" [(ngModel)]="altitudeM"></div>
-              <div class="field"><label for="ls2">Line spacing (m)</label>
+              <div class="field"><label for="ls2">{{ scanMode === 'STRUCTURE' ? 'Orbit level spacing (m)' : 'Line spacing (m)' }}</label>
                 <input id="ls2" name="ls2" type="number" [(ngModel)]="lineSpacingM"></div>
+              @if (scanMode === 'STRUCTURE') {
+                <div class="field"><label for="so">Standoff from facade (m)</label>
+                  <input id="so" name="so" type="number" [(ngModel)]="standoffM"></div>
+              }
+              <div class="field"><label for="td">Ring tilt — fixed for this flight</label>
+                <select id="td" name="td" [(ngModel)]="tiltDeg">
+                  <option [ngValue]="30">+30° — facade side looks up (eaves, overhangs, roofline)</option>
+                  <option [ngValue]="0">0° — level slice at flight altitude</option>
+                  <option [ngValue]="-30">−30° — facade side looks down (terrain, plinths, roofs from above)</option>
+                </select></div>
               <div class="field"><label for="sp2">Speed (m/s)</label>
                 <input id="sp2" name="sp2" type="number" [(ngModel)]="speedMps"></div>
-              <div class="field"><label for="tf" style="display:inline">Terrain following</label>
-                <input id="tf" name="tf" type="checkbox" [(ngModel)]="terrainFollowing" style="width:auto; margin-left:.5rem"></div>
+              @if (scanMode === 'LANDSCAPE') {
+                <div class="field"><label for="tf" style="display:inline">Terrain following</label>
+                  <input id="tf" name="tf" type="checkbox" [(ngModel)]="terrainFollowing" style="width:auto; margin-left:.5rem"></div>
+              }
 
               <button [disabled]="!detailPolygon() || busy()" (click)="planRoute()">
                 {{ detailRoute() ? 'Re-plan route' : 'Plan optimal route' }}
               </button>
               @if (routeStats(); as r) {
                 <p class="mono dim" style="margin:.6rem 0">
-                  Route: {{ r.lines }} lines · {{ r.lengthM | number:'1.0-0' }} m ·
+                  Route: {{ r.lines }} {{ scanMode === 'STRUCTURE' ? 'orbit levels' : 'lines' }} ·
+                  {{ r.lengthM | number:'1.0-0' }} m ·
                   ≈{{ r.durationS / 60 | number:'1.0-1' }} min — shown in amber on the cloud and map.
                 </p>
               }
               @if (refineError()) { <p class="mono" style="color: var(--red)">{{ refineError() }}</p> }
               <button class="btn-primary" style="margin-top:.4rem"
                 [disabled]="m.state !== 'DETAIL_SELECTED' || !detailRoute() || busy()" (click)="launchDetail()">
-                Launch detailed scan
+                {{ isRescan() ? 'Launch rescan flight' : 'Launch detailed scan' }}
               </button>
+            </div>
+          }
+
+          <!-- pre-flight self-test (remote diagnostics) -->
+          @if (auth.isStaff) {
+            <div class="card">
+              <h2>Pre-flight check <span class="badge amber">remote</span></h2>
+              <button (click)="runSelfTest()" [disabled]="testRunning()">
+                {{ testRunning() ? 'Running on drone…' : 'Run self-test' }}
+              </button>
+              @if (selfTest(); as st) {
+                <p class="mono" style="margin:.6rem 0 .3rem">
+                  Overall:
+                  <span class="badge" [class.green]="st.overall === 'PASS'"
+                        [class.amber]="st.overall === 'WARN'" [class.red]="st.overall === 'FAIL'">
+                    {{ st.overall }}</span>
+                  <span class="dim"> · {{ st.mode }} · {{ st.checks.length }} checks</span>
+                </p>
+                <div class="checks">
+                  @for (c of st.checks; track c.component) {
+                    <div class="check" [class.bad]="c.status === 'FAIL'">
+                      <span class="badge" [class.green]="c.status === 'PASS'"
+                            [class.amber]="c.status === 'WARN'" [class.red]="c.status === 'FAIL'">
+                        {{ c.status }}</span>
+                      <span class="mono comp">{{ c.component }}</span>
+                      <span class="mono dim val">{{ c.value }}</span>
+                      <div class="msg">{{ c.message }}
+                        @if (c.hint) { <span class="dim"> — {{ c.hint }}</span> }
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
             </div>
           }
 
@@ -129,6 +185,27 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
             }
           </div>
 
+          @if (photos().length) {
+            <div class="card">
+              <h2>Flight photos <span class="badge amber">camera</span></h2>
+              <div class="gallery">
+                @for (ph of photos(); track ph.name) {
+                  <a [href]="ph.url" target="_blank" rel="noopener">
+                    <img [src]="ph.url" [alt]="ph.name" loading="lazy"></a>
+                }
+              </div>
+            </div>
+          }
+
+          @if (auth.isStaff && flightLogs().length) {
+            <div class="card">
+              <h2>Flight logs <span class="badge amber">full detail</span></h2>
+              @for (l of flightLogs(); track l.name) {
+                <div class="mono" style="padding:.25rem 0"><a [href]="l.url" download>{{ l.name }}</a></div>
+              }
+            </div>
+          }
+
           <div class="card">
             <h2>Event log</h2>
             <div class="log mono">
@@ -149,6 +226,17 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
     .preview { width: 100%; border-radius: 4px; border: 1px solid var(--line); }
     .asset { padding: .5rem 0; border-bottom: 1px solid var(--line); display: grid; gap: .25rem; }
     .log { max-height: 220px; overflow-y: auto; font-size: .72rem; color: var(--text-dim); }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: .4rem; }
+    .gallery img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 4px;
+      border: 1px solid var(--line); }
+    .gallery img:hover { border-color: var(--amber); }
+    .checks { display: grid; gap: .35rem; max-height: 320px; overflow-y: auto; }
+    .check { display: grid; grid-template-columns: 54px 130px 1fr; gap: .4rem .6rem;
+      align-items: baseline; padding: .3rem .4rem; border: 1px solid var(--line); border-radius: 4px; }
+    .check.bad { border-color: var(--red); }
+    .check .comp { font-size: .72rem; }
+    .check .val { font-size: .7rem; text-align: right; }
+    .check .msg { grid-column: 1 / -1; font-size: .78rem; }
   `],
 })
 export class MissionComponent implements OnInit, OnDestroy {
@@ -163,6 +251,10 @@ export class MissionComponent implements OnInit, OnDestroy {
   assets = signal<Asset[]>([]);
   previewUrl = signal('');
   log = signal<string[]>([]);
+  photos = signal<Array<{ url: string; name: string }>>([]);
+  selfTest = signal<any | null>(null);
+  testRunning = signal(false);
+  flightLogs = signal<Array<{ url: string; name: string }>>([]);
   detailPolygon = signal('');
   crudeCloud = signal<LasCloud | null>(null);
   crudeCrs = signal('EPSG:32634');
@@ -176,6 +268,9 @@ export class MissionComponent implements OnInit, OnDestroy {
   lineSpacingM = 8;
   speedMps = 4;
   terrainFollowing = true;
+  scanMode = 'LANDSCAPE';
+  standoffM = 15;
+  tiltDeg = 0;
 
   private es?: EventSource;
 
@@ -193,7 +288,9 @@ export class MissionComponent implements OnInit, OnDestroy {
     return t ? { lat: t.lat, lon: t.lon } : null;
   });
   canRefine = computed(() =>
-    this.auth.isStaff && ['PREVIEW_READY', 'DETAIL_SELECTED'].includes(this.mission()?.state ?? ''));
+    this.auth.isStaff && ['PREVIEW_READY', 'DETAIL_SELECTED', 'COMPLETE'].includes(this.mission()?.state ?? ''));
+  isRescan = computed(() => this.mission()?.state === 'COMPLETE' || this.rescanArmed());
+  rescanArmed = signal(false);
   abortable = computed(() =>
     ['CRUDE_MISSION_UPLOADED', 'CRUDE_FLYING', 'DETAIL_MISSION_UPLOADED', 'DETAIL_FLYING']
       .includes(this.mission()?.state ?? ''));
@@ -206,6 +303,7 @@ export class MissionComponent implements OnInit, OnDestroy {
   private async reload() {
     const res = await firstValueFrom(this.api.mission(this.id));
     this.mission.set(res.mission);
+    if (res.mission.scanMode) this.scanMode = res.mission.scanMode;
     this.areas.set(res.areas);
     const detail = (res.areas as ScanAreaInfo[]).find(a => a.passType === 'DETAILED');
     if (detail) {
@@ -213,6 +311,10 @@ export class MissionComponent implements OnInit, OnDestroy {
       if (detail.routeJson) this.detailRoute.set(detail.routeJson);
     }
     this.assets.set(await firstValueFrom(this.api.deliverables(this.id)));
+    this.api.missionPhotos(this.id).subscribe({ next: p => this.photos.set(p), error: () => {} });
+    this.api.latestSelfTest(this.id).subscribe({
+      next: r => this.selfTest.set(this.parseReport(r.report)), error: () => {} });
+    this.api.flightLogs(this.id).subscribe({ next: l => this.flightLogs.set(l), error: () => {} });
     this.tryLoadPreview(res.mission.state);
     this.tryLoadCrudeCloud(res.mission.state);
   }
@@ -226,12 +328,54 @@ export class MissionComponent implements OnInit, OnDestroy {
       if (m) this.mission.set({ ...m, state: data.state as MissionState });
       this.tryLoadPreview(data.state);
       this.tryLoadCrudeCloud(data.state);
-      if (data.state === 'COMPLETE') this.reload();
+      if (data.state === 'COMPLETE') { this.crudeCloud.set(null); this.reload(); }
+    });
+    this.es.addEventListener('selftest', (e: MessageEvent) => {
+      this.selfTest.set(this.parseReport(e.data));
+      this.testRunning.set(false);
+      this.appendLog('Self-test report received');
+    });
+    this.es.addEventListener('flightlog', () => {
+      this.api.flightLogs(this.id).subscribe({ next: l => this.flightLogs.set(l), error: () => {} });
+      this.appendLog('Flight log uploaded by the drone');
+    });
+    this.es.addEventListener('agent', (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data);
+        this.appendLog(`AGENT ${d.type}: ${d.payload}`);
+      } catch { /* ignore */ }
     });
     this.es.addEventListener('telemetry', (e: MessageEvent) => {
       const t: Telemetry = JSON.parse(e.data);
       this.telemetry.set(t);
     });
+  }
+
+  /** Payload changed: sensible defaults per mode; existing route becomes stale. */
+  runSelfTest() {
+    this.testRunning.set(true);
+    this.api.runSelfTest(this.id).subscribe({
+      next: () => this.appendLog('Self-test requested — running on the drone'),
+      error: () => { this.testRunning.set(false); this.appendLog('Self-test request failed'); },
+    });
+    // safety timeout in case no report arrives
+    setTimeout(() => this.testRunning.set(false), 30000);
+  }
+
+  /** Report may arrive JSON-encoded once or twice (SSE string payload). */
+  private parseReport(raw: string): any {
+    try {
+      let v: any = JSON.parse(raw);
+      if (typeof v === 'string') v = JSON.parse(v);
+      return v;
+    } catch { return null; }
+  }
+
+  onModeChange() {
+    if (this.scanMode === 'STRUCTURE') { this.altitudeM = 20; this.lineSpacingM = 4; this.tiltDeg = 0; }
+    else { this.altitudeM = 35; this.lineSpacingM = 8; this.tiltDeg = -30; }
+    this.detailRoute.set('');
+    this.routeStats.set(null);
   }
 
   onDetailPolygon(geojson: string) {
@@ -243,7 +387,27 @@ export class MissionComponent implements OnInit, OnDestroy {
   }
 
   private tryLoadCrudeCloud(state: string) {
-    if (!['PREVIEW_READY', 'DETAIL_SELECTED'].includes(state) || this.crudeCloud()) return;
+    if (this.crudeCloud()) return;
+    if (state === 'COMPLETE') {
+      // Rescan mode: select on the DELIVERED merged cloud for full fidelity.
+      this.api.deliverables(this.id).subscribe({
+        next: assets => {
+          const latest = assets[0];
+          if (!latest) { this.cloudStatus.set('No deliverable to rescan from yet.'); return; }
+          this.crudeCrs.set(latest.crs || this.crudeCrs());
+          this.api.assetUrls(latest.id).subscribe({
+            next: async u => {
+              try { this.crudeCloud.set(await loadLas(u.lasUrl)); this.rescanArmed.set(true); }
+              catch (e: any) { this.cloudStatus.set('Could not stream the merged cloud: ' + (e?.message ?? e)); }
+            },
+            error: () => this.cloudStatus.set('Deliverable not accessible.'),
+          });
+        },
+        error: () => {},
+      });
+      return;
+    }
+    if (!['PREVIEW_READY', 'DETAIL_SELECTED'].includes(state)) return;
     this.api.crudeCloud(this.id).subscribe({
       next: async r => {
         this.crudeCrs.set(r.crs);
@@ -275,6 +439,7 @@ export class MissionComponent implements OnInit, OnDestroy {
         polygonGeoJson: this.detailPolygon(), altitudeM: this.altitudeM,
         lineSpacingM: this.lineSpacingM, speedMps: this.speedMps,
         terrainFollowing: this.terrainFollowing,
+        scanMode: this.scanMode, standoffM: this.standoffM, tiltDeg: this.tiltDeg,
       }));
       this.mission.set(res.mission);
       this.detailRoute.set(res.routeGeoJson);

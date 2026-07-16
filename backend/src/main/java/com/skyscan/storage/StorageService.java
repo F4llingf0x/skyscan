@@ -2,6 +2,7 @@ package com.skyscan.storage;
 
 import io.minio.*;
 import io.minio.http.Method;
+import io.minio.messages.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -85,6 +86,21 @@ public class StorageService {
     public String presignInternalPut(String objectKey, int minutes) { return presign(internalClient, Method.PUT, objectKey, minutes); }
     /** Presigned GET for the browser (viewer streaming / LAZ download). */
     public String presignExternalGet(String objectKey, int minutes) { return presign(externalClient, Method.GET, objectKey, minutes); }
+
+    /** Object keys under a prefix (e.g. photos/{missionId}/), sorted. */
+    public java.util.List<String> listKeys(String prefix) {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        try {
+            for (Result<Item> r : internalClient.listObjects(
+                    ListObjectsArgs.builder().bucket(bucket).prefix(prefix).recursive(true).build())) {
+                keys.add(r.get().objectName());
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("List failed for prefix " + prefix, e);
+        }
+        java.util.Collections.sort(keys);
+        return keys;
+    }
 
     private String presign(MinioClient client, Method method, String objectKey, int minutes) {
         try {

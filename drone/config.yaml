@@ -1,0 +1,76 @@
+# SkyScan Jetson agent configuration
+drone_id: skyscan-uav-01
+
+backend:
+  base_url: http://192.168.1.50:8080     # SkyScan backend (LAN or VPN/LTE)
+  internal_token: skyscan-internal-demo-token
+  poll_interval_s: 1.0
+
+mavlink:
+  # Pixhawk 6C Pro TELEM2 <-> Jetson UART (or USB /dev/ttyACM0)
+  device: /dev/ttyTHS1
+  baud: 921600
+  vehicle: arducopter                     # target firmware; see README for PX4 notes
+
+flight:
+  cruise_speed_mps: 4.0
+  waypoint_accept_radius_m: 1.5
+  takeoff_alt_m: 5.0
+  geofence_margin_m: 30                  # around the mission polygon
+  battery:
+    leg_start_min_pct: 90                # don't start a leg below this
+    rtl_pct: 30                          # return for swap at this level
+    land_now_pct: 18                     # hard floor: land immediately
+  resume_file: /var/lib/skyscan/mission_progress.json
+
+lidar:
+  port: /dev/ttyUSB0                     # RPLidar C1
+  scan_hz: 10
+  max_range_m: 12.0
+  mount:                                  # sensor -> body extrinsics (measure after build!)
+    offset_m: [0.12, 0.0, -0.03]         # x fwd, y right, z down from IMU
+    tilt_zero_deg: 0.0                   # encoder reading at optically level
+    tilt_axis: roll                      # roll (recommended: fore/aft rays stay level) | pitch
+
+tilt:
+  pca9685_channel: 0
+  i2c_bus: 7                             # Jetson Orin Nano I2C bus for PCA9685 + TCA9548A
+  encoder_mux_channel: 2                 # AS5600 behind TCA9548A channel
+  min_deg: -30.0
+  max_deg: 30.0
+  settle_tolerance_deg: 0.4
+  # scan-mode presets
+  # Tilt is FIXED for the whole flight (mechanical constraint). These are the
+  # defaults when the mission plan does not carry an explicit tiltDeg.
+  landscape_deg: -30.0                   # side of the ring swathes the terrain (roll mount)
+  structure_deg: 0.0                     # level ring at flight altitude; +/-30 selectable per flight
+
+rangefinder:
+  # Downward TFmini-S (0.1..12 m). mode: uart (factory default) or i2c
+  mode: uart
+  port: /dev/ttyTHS2
+  baud: 115200
+  mux_channel: 0                         # used only in i2c mode (TCA9548A channel)
+  publish_hz: 20
+
+camera:
+  enabled: true
+  width: 3280
+  height: 2464
+  interval_s: 2.5                        # photo cadence during detail pass
+  session_dir: /var/lib/skyscan/photos
+
+avoidance:
+  stop_distance_m: 4.0                   # brake-and-hold threshold (forward sector)
+  resume_clear_m: 6.0
+  sector_deg: 20                         # +/- around the nose in the horizontal ring
+  detour_after_s: 8                      # persistent block -> autonomous detour + obstacle scan
+  detour_margin_m: 3.0                   # arc radius = stop_distance + this
+
+logging:
+  dir: /var/lib/skyscan/logs             # full-detail JSONL flight logs (10 Hz state)
+  state_hz: 10.0
+
+output:
+  scan_dir: /var/lib/skyscan/scans
+  target_crs: EPSG:32634

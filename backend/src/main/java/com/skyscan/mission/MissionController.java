@@ -56,7 +56,7 @@ public class MissionController {
         Site site = sites.findById(req.siteId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found"));
         Mission m = service.createMission(site, req.name(), req.polygonGeoJson(),
-                req.altitudeM(), req.lineSpacingM(), req.speedMps());
+                req.altitudeM(), req.lineSpacingM(), req.speedMps(), req.scanMode());
         return MissionView.of(m);
     }
 
@@ -72,7 +72,9 @@ public class MissionController {
     public RefineResponse refine(@PathVariable UUID id, @Valid @RequestBody RefineRequest req) {
         try {
             var route = service.submitDetailArea(id, req.polygonGeoJson(), req.altitudeM(),
-                    req.lineSpacingM(), req.speedMps(), req.terrainFollowing());
+                    req.lineSpacingM(), req.speedMps(), req.terrainFollowing(),
+                    req.scanMode(), req.standoffM() == null ? 15.0 : req.standoffM(),
+                    req.tiltDeg() == null ? 0.0 : req.tiltDeg());
             return new RefineResponse(MissionView.of(service.get(id)),
                     route.routeGeoJson(), route.lengthM(), route.lineCount(), route.estDurationS());
         } catch (IllegalArgumentException e) {
@@ -144,6 +146,45 @@ public class MissionController {
                 "cloudUrl", storage.presignExternalGet(crude.getRawObjectKey(), 60),
                 "crs", targetCrs,
                 "sensorType", crude.getSensorType().name());
+    }
+
+    /** Remote diagnostics: run the on-drone self-test (ground checks; safe any time). */
+    @PostMapping("/{id}/self-test")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public Map<String, String> selfTest(@PathVariable UUID id) {
+        checkedMission(id);
+        service.requestSelfTest(id);
+        return Map.of("status", "requested");
+    }
+
+    /** Most recent self-test report for this mission (persisted from the SELFTEST event). */
+    @GetMapping("/{id}/self-test/latest")
+    public Map<String, Object> latestSelfTest(@PathVariable UUID id) {
+        checkedMission(id);
+        return events.findFirstByMissionIdAndTypeOrderByAtDesc(id, "SELFTEST")
+                .<Map<String, Object>>map(e -> Map.of("report", e.getPayloadJson(), "at", e.getAt()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No self-test yet"));
+    }
+
+    /** Full-detail flight logs (JSONL) uploaded by the drone after each flight. */
+    @GetMapping("/{id}/logs")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public List<Map<String, String>> flightLogs(@PathVariable UUID id) {
+        checkedMission(id);
+        return storage.listKeys("logs/" + id + "/").stream()
+                .map(k -> Map.of("url", storage.presignExternalGet(k, 60),
+                        "name", k.substring(k.lastIndexOf('/') + 1)))
+                .toList();
+    }
+
+    /** Geotagged photos captured by the drone camera — customer deliverable. */
+    @GetMapping("/{id}/photos")
+    public List<Map<String, String>> photos(@PathVariable UUID id) {
+        checkedMission(id);
+        return storage.listKeys("photos/" + id + "/").stream()
+                .map(k -> Map.of("url", storage.presignExternalGet(k, 60),
+                        "name", k.substring(k.lastIndexOf('/') + 1)))
+                .toList();
     }
 
     @GetMapping("/{id}/deliverables")

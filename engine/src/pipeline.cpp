@@ -227,28 +227,39 @@ bool convertWithPdal(const std::string& lasPath, const std::string& outPath, boo
 
 PipelineResult runPipeline(const std::vector<JobInput>& inputs, const std::string& targetCrs,
                            const std::string& lasOut, const std::string& lazOut, const std::string& copcOut) {
-    Cloud crude, detailed;
-    bool haveCrude = false, haveDetailed = false;
+    // A mission can have multiple detailed acquisitions (initial detail pass +
+    // any number of rescan passes over selected areas): all are co-registered
+    // onto the crude base and merged.
+    Cloud crude;
+    std::vector<Cloud> details;
+    bool haveCrude = false;
 
     for (const auto& in : inputs) {
         Cloud c = readLas(in.localPath);
         c = removeOutliers(c);
 
-        if (in.sensorType == "SPINNING_TILTED") {
-            c = reconstructSpinningTilted(c);           // STUB SLAM branch (kept real in flow)
+        if (in.sensorType == "SPINNING_TILTED" || in.sensorType == "FRONT_360_VERTICAL") {
+            // Detail payloads need post-processed reconstruction (STUB SLAM branch, flow kept real).
+            log("detail payload: " + in.sensorType);
+            c = reconstructSpinningTilted(c);
             c = voxelDownsample(c, 0.10);               // dense detail cloud: fine voxels
         } else {
             c = voxelDownsample(c, 0.50);               // crude overview: coarser voxels
         }
         c = georeference(c, targetCrs);                 // STUB georeference
 
-        if (in.passType == "DETAILED") { detailed = std::move(c); haveDetailed = true; }
-        else                           { crude = std::move(c);    haveCrude = true; }
+        if (in.passType == "DETAILED") details.push_back(std::move(c));
+        else                           { crude = std::move(c); haveCrude = true; }
     }
 
     Cloud merged;
-    if (haveCrude && haveDetailed) merged = coregisterAndMerge(crude, detailed);
-    else merged = haveDetailed ? detailed : crude;
+    if (haveCrude) {
+        merged = crude;
+        for (auto& d : details) merged = coregisterAndMerge(merged, d);
+    } else if (!details.empty()) {
+        merged = details.front();
+        for (size_t i = 1; i < details.size(); ++i) merged = coregisterAndMerge(merged, details[i]);
+    }
 
     writeLas(lasOut, merged);
     bool realLaz  = convertWithPdal(lasOut, lazOut, false);

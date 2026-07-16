@@ -32,7 +32,7 @@ public class MissionStateMachine {
         ALLOWED.put(DETAIL_LANDED,           EnumSet.of(PROCESSING, FAILED));
         ALLOWED.put(PROCESSING,              EnumSet.of(COMPLETE, FAILED));
         ALLOWED.put(RETURN_TO_HOME,          EnumSet.of(ABORTED, FAILED));
-        ALLOWED.put(COMPLETE,                EnumSet.noneOf(MissionState.class));
+        ALLOWED.put(COMPLETE,                EnumSet.of(DETAIL_SELECTED));   // rescan: select a new zone on the delivered cloud
         ALLOWED.put(ABORTED,                 EnumSet.noneOf(MissionState.class));
         ALLOWED.put(FAILED,                  EnumSet.noneOf(MissionState.class));
     }

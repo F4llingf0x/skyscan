@@ -31,7 +31,8 @@ public class RoutePlanner {
 
     private static final ObjectMapper M = new ObjectMapper();
 
-    public PlannedRoute plan(String polygonGeoJson, double lineSpacingM, double speedMps) {
+    /** LANDSCAPE: boustrophedon coverage at a constant altitude (3rd route coordinate). */
+    public PlannedRoute plan(String polygonGeoJson, double lineSpacingM, double speedMps, double altitudeM) {
         try {
             List<double[]> ring = parseRing(polygonGeoJson);
             if (ring.size() < 3) throw new IllegalArgumentException("Polygon needs at least 3 vertices");
@@ -84,7 +85,7 @@ public class RoutePlanner {
             for (int i = 0; i < world.size(); i++) {
                 double[] p = world.get(i);
                 if (i > 0) length += Math.hypot(p[0] - world.get(i - 1)[0], p[1] - world.get(i - 1)[1]);
-                coords.addArray().add(p[0] / mPerLon + lon0).add(p[1] / mPerLat + lat0);
+                coords.addArray().add(p[0] / mPerLon + lon0).add(p[1] / mPerLat + lat0).add(altitudeM);
             }
             ObjectNode geo = M.createObjectNode();
             geo.put("type", "LineString");
@@ -94,6 +95,68 @@ public class RoutePlanner {
             throw e;
         } catch (Exception e) {
             throw new IllegalArgumentException("Route planning failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * STRUCTURE: full scan of a building/statue with the front-facing 360° vertical
+     * payload. The route is a stack of orbit loops around the target footprint:
+     *   1. offset each footprint vertex outward from the centroid by the standoff
+     *      distance (facade clearance for the front-facing scanner),
+     *   2. fly the loop at each altitude level, levels spaced levelSpacingM apart
+     *      from levelSpacingM/2 up to topHeightM (the vertical-plane 360° sweep
+     *      covers the facade band around each level),
+     *   3. climb to the next level at the loop's start corner — a stacked spiral.
+     * Route coordinates are 3D: [lon, lat, relative altitude m].
+     */
+    public PlannedRoute planStructure(String polygonGeoJson, double levelSpacingM, double speedMps,
+                                      double standoffM, double topHeightM) {
+        try {
+            List<double[]> ring = parseRing(polygonGeoJson);
+            if (ring.size() < 3) throw new IllegalArgumentException("Footprint needs at least 3 vertices");
+            if (levelSpacingM <= 0) throw new IllegalArgumentException("Level spacing must be positive");
+
+            double lon0 = 0, lat0 = 0;
+            for (double[] p : ring) { lon0 += p[0]; lat0 += p[1]; }
+            lon0 /= ring.size(); lat0 /= ring.size();
+            double mPerLon = 111320.0 * Math.cos(Math.toRadians(lat0)), mPerLat = 110540.0;
+
+            // outward-offset loop (approximate buffer: radial from centroid — good for compact footprints)
+            List<double[]> loop = new ArrayList<>();
+            for (double[] p : ring) {
+                double x = (p[0] - lon0) * mPerLon, y = (p[1] - lat0) * mPerLat;
+                double d = Math.hypot(x, y);
+                double k = d < 1e-6 ? 0 : (d + Math.max(0, standoffM)) / d;
+                loop.add(new double[]{x * k, y * k});
+            }
+
+            double perimeter = 0;
+            for (int i = 0; i < loop.size(); i++) {
+                double[] a = loop.get(i), b = loop.get((i + 1) % loop.size());
+                perimeter += Math.hypot(b[0] - a[0], b[1] - a[1]);
+            }
+
+            ArrayNode coords = M.createArrayNode();
+            int levels = 0;
+            double length = 0, prevZ = -1;
+            for (double z = levelSpacingM / 2; z <= Math.max(levelSpacingM / 2, topHeightM); z += levelSpacingM) {
+                levels++;
+                for (int i = 0; i <= loop.size(); i++) {         // closed loop: repeat first vertex
+                    double[] p = loop.get(i % loop.size());
+                    coords.addArray().add(p[0] / mPerLon + lon0).add(p[1] / mPerLat + lat0).add(z);
+                }
+                length += perimeter + (prevZ >= 0 ? z - prevZ : z);
+                prevZ = z;
+            }
+
+            ObjectNode geo = M.createObjectNode();
+            geo.put("type", "LineString");
+            geo.set("coordinates", coords);
+            return new PlannedRoute(geo.toString(), length, levels, speedMps > 0 ? length / speedMps : 0);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Structure route planning failed: " + e.getMessage(), e);
         }
     }
 

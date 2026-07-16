@@ -11,6 +11,7 @@ public class Mission {
     @Column(nullable = false) private String name;
     @ManyToOne(optional = false) private Site site;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private MissionState state = MissionState.IDLE;
+    @Enumerated(EnumType.STRING) @Column(nullable = false) private ScanMode scanMode = ScanMode.LANDSCAPE;
     private String previewObjectKey;   // field-preview artifact in object storage
     private Instant createdAt = Instant.now();
     private Instant updatedAt = Instant.now();
@@ -25,6 +26,8 @@ public class Mission {
     public void setSite(Site v) { site = v; }
     public MissionState getState() { return state; }
     public void setState(MissionState v) { state = v; }
+    public ScanMode getScanMode() { return scanMode; }
+    public void setScanMode(ScanMode v) { scanMode = v; }
     public String getPreviewObjectKey() { return previewObjectKey; }
     public void setPreviewObjectKey(String v) { previewObjectKey = v; }
     public Instant getCreatedAt() { return createdAt; }

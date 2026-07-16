@@ -1,0 +1,16 @@
+[Unit]
+Description=SkyScan drone companion agent (Jetson Orin Nano)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skyscan
+ExecStart=/usr/bin/python3 -m skyscan_drone.agent --config /etc/skyscan/config.yaml
+Restart=always
+RestartSec=3
+WatchdogSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

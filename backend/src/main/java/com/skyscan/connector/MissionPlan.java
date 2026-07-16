@@ -18,5 +18,7 @@ public record MissionPlan(
         double lineSpacingM,
         double speedMps,
         boolean terrainFollowing,
+        /** Ring tilt in degrees, fixed for the whole flight. */
+        double tiltDeg,
         /** Planned coverage route (GeoJSON LineString, WGS84); nullable. */
         String routeJson) {}

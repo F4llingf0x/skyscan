@@ -15,6 +15,10 @@ spring:
   mvc:
     async:
       request-timeout: 3600000   # SSE streams stay open
+  servlet:
+    multipart:
+      max-file-size: 512MB      # raw scans from the drone agent
+      max-request-size: 1024MB
 
 management:
   endpoints:
