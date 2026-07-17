@@ -21,6 +21,10 @@ public class ScanArea {
     private double tiltDeg;
     /** Planned coverage route (GeoJSON LineString, WGS84), computed by RoutePlanner. */
     @Column(columnDefinition = "text") private String routeJson;
+    /** Detection-rescan sub-polygon: when set on the CRUDE area, the next
+     *  crude flight covers ONLY this sub-area and new detections MERGE into
+     *  the existing plant list (missed-plant recovery loop). Cleared after. */
+    @Column(columnDefinition = "text") private String rescanPolygonGeoJson;
 
     public UUID getId() { return id; }
     public Mission getMission() { return mission; }
@@ -43,4 +47,6 @@ public class ScanArea {
     public void setTiltDeg(double v) { tiltDeg = v; }
     public String getRouteJson() { return routeJson; }
     public void setRouteJson(String v) { routeJson = v; }
+    public String getRescanPolygonGeoJson() { return rescanPolygonGeoJson; }
+    public void setRescanPolygonGeoJson(String v) { rescanPolygonGeoJson = v; }
 }

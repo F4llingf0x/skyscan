@@ -6,6 +6,7 @@ export const routes: Routes = [
   { path: '', canActivate: [authGuard], loadComponent: () => import('./pages/dashboard.component').then(m => m.DashboardComponent) },
   { path: 'sites/:id', canActivate: [authGuard], loadComponent: () => import('./pages/site.component').then(m => m.SiteComponent) },
   { path: 'sites/:id/plan', canActivate: [authGuard], loadComponent: () => import('./pages/planner.component').then(m => m.PlannerComponent) },
+  { path: 'drone-check', canActivate: [authGuard], loadComponent: () => import('./pages/drone-check.component').then(m => m.DroneCheckComponent) },
   { path: 'missions/:id', canActivate: [authGuard], loadComponent: () => import('./pages/mission.component').then(m => m.MissionComponent) },
   { path: 'assets/:id', canActivate: [authGuard], loadComponent: () => import('./pages/asset-viewer.component').then(m => m.AssetViewerComponent) },
   // Standalone test bench for the crude cloud editor (bundled test data, no auth/backend)

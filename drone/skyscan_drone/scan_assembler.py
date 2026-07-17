@@ -5,12 +5,14 @@ body frame (mount extrinsics) -> NED via the time-interpolated attitude ->
 local UTM via the time-interpolated position. Written out as LAS in the
 mission's target CRS, ready for the SkyScan processing engine.
 
-Frames:
-  scan plane (HORIZONTAL ring): x' forward, y' right (angle 0 = nose, +90 = right)
-  tilt (FIXED per flight, measured by encoder): rotation about a build-time axis —
-    axis: "roll"  (recommended): + tilt lifts the RIGHT side of the ring; the
-          fore/aft rays stay horizontal, so forward avoidance is tilt-immune
-    axis: "pitch": + tilt lifts the nose ray (legacy mounting)
+Frames — both mount planes supported (config `lidar.plane`):
+  vertical  (default): ring in body Y-Z; in-plane angle a: 0 = up,
+    +90 = body right, ±180 = down. Ray in sensor frame: (0, sin a, -cos a).
+    Tilt pitches the plane about body Y; + leans the TOP of the ring toward
+    the nose. Lateral rays lie on the tilt axis -> tilt-immune.
+  horizontal: ring in body X-Y; a: 0 = nose, +90 = right. Ray in sensor
+    frame: (cos a, sin a, 0). Tilt pitches about body Y; + lifts the NOSE ray.
+    Fore/aft rays move with tilt; lateral rays (on the axis) stay level.
   body: x fwd, y right, z down; NED via ZYX (yaw-pitch-roll)
 """
 from __future__ import annotations
@@ -43,8 +45,10 @@ def _utm34n(lon: float, lat: float) -> tuple[float, float]:
 
 
 class ScanAssembler:
-    def __init__(self, mount_cfg: dict, pose_at, tilt_deg_provider, ground_alt_amsl_provider):
+    def __init__(self, mount_cfg: dict, pose_at, tilt_deg_provider, ground_alt_amsl_provider,
+                 plane: str = "vertical"):
         self.mount = mount_cfg
+        self.plane = plane                      # vertical | horizontal (lidar.plane)
         self.pose_at = pose_at
         self.tilt_deg = tilt_deg_provider
         self.ground_alt = ground_alt_amsl_provider
@@ -67,18 +71,22 @@ class ScanAssembler:
         cy, sy = math.cos(pose.yaw), math.sin(pose.yaw)
         ct, st = math.cos(tilt), math.sin(tilt)
         out = []
-        roll_axis = self.mount.get("tilt_axis", "roll") == "roll"
+        vertical = self.plane == "vertical"
         for p in pts:
             a = math.radians(p.angle_deg)
-            # horizontal ring (x' fwd, y' right, z'=0), tilted about the mount axis:
-            xs_, ys_ = p.dist_m * math.cos(a), p.dist_m * math.sin(a)
-            if roll_axis:
-                # tilt about body X (+ = right side of ring up, z-down frame)
-                xb = xs_ + ox
-                yb = ys_ * ct + oy
-                zb = -(ys_ * st) + oz
+            if vertical:
+                # ring in body Y-Z: ray (0, sin a, -cos a), pitched about body Y
+                # by the measured tilt (+ = ring top toward the nose)
+                ys_ = p.dist_m * math.sin(a)
+                zs_ = -p.dist_m * math.cos(a)
+                xb = -zs_ * st + ox
+                yb = ys_ + oy
+                zb = zs_ * ct + oz
             else:
-                # tilt about body Y (+ = nose of ring up)
+                # ring in body X-Y: ray (cos a, sin a, 0), pitched about body Y
+                # by the measured tilt (+ = nose ray up)
+                xs_ = p.dist_m * math.cos(a)
+                ys_ = p.dist_m * math.sin(a)
                 xb = xs_ * ct + ox
                 yb = ys_ + oy
                 zb = -(xs_ * st) + oz
@@ -101,9 +109,12 @@ class ScanAssembler:
     def resume(self) -> None:
         self.capturing = True
 
-    def finish(self, path: str) -> int:
+    def finish(self, path: str | None) -> int:
         self.capturing = False
         with self._lock:
+            if path is None:                 # cloudless mission: discard buffer
+                self.points = []
+                return 0
             n = len(self.points)
             log.info("assembling %d points -> %s", n, path)
             write_las(path, self.points)

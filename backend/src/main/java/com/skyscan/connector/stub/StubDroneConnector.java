@@ -16,6 +16,8 @@ package com.skyscan.connector.stub;
 
 import com.skyscan.connector.*;
 import com.skyscan.domain.PassType;
+import com.skyscan.domain.MissionType;
+import com.skyscan.domain.SensorType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -103,6 +105,25 @@ public class StubDroneConnector implements DroneConnector {
                         .append(",\"batteryPct\":").append(Math.max(20, 100 - t * 2.5))
                         .append(",\"mode\":\"AUTO.MISSION\",\"note\":\"STUB simulated frame\"}\n");
 
+                // WILDLIFE demo: stream live animal tags mid-pass, near the
+                // vehicle's current position, exactly like the real agent does.
+                if (plan.sensorType() == SensorType.WILDLIFE_CAM && (t == 5 || t == 9 || t == 13)) {
+                    String[][] demo = {
+                        {"A-001", "roe deer", "FUSED", "37.8", "0.91"},
+                        {"A-002", "wild boar", "FUSED", "38.6", "0.84"},
+                        {"A-003", "hare", "RGB", "", "0.67"},
+                    };
+                    String[] d = demo[t == 5 ? 0 : t == 9 ? 1 : 2];
+                    String temp = d[3].isEmpty() ? "null" : d[3];
+                    String s = "{\"label\":\"" + d[0] + "\",\"species\":\"" + d[1]
+                            + "\",\"confidence\":" + d[4]
+                            + ",\"lat\":" + String.format(java.util.Locale.US, "%.6f", lat + 0.00008)
+                            + ",\"lon\":" + String.format(java.util.Locale.US, "%.6f", lon - 0.00012)
+                            + ",\"sightedAt\":\"" + Instant.now() + "\",\"source\":\"" + d[2]
+                            + "\",\"bodyTempC\":" + temp + "}";
+                    listener.onLiveAnimalSighting(missionId, s);
+                }
+
                 if (t >= FLIGHT_TICKS) {
                     cancelFlight(missionId);
                     land(plan);
@@ -119,18 +140,27 @@ public class StubDroneConnector implements DroneConnector {
         // STUB: copy the bundled sample scan to a temp file, as if the Jetson had just
         // finished writing the capture and pushed it over the ground link.
         boolean crude = plan.passType() == PassType.CRUDE;
-        // STUB: sample scan chosen by the mounted payload.
-        String sampleFile = switch (plan.sensorType()) {
-            case FIXED_3D -> "crude_fixed3d.las";
-            case FRONT_360_VERTICAL -> "detailed_front360.las";   // building full scan
-            case SPINNING_TILTED -> "detailed_spinning.las";      // landscape detail
-        };
-        Path sample = samplesDir.resolve(sampleFile);
-        Path scan = Files.createTempFile("skyscan-raw-", ".las");
-        Files.copy(sample, scan, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        // CROP_HEALTH / WILDLIFE_SURVEY: the lidar flies for OBSTACLE AVOIDANCE
+        // only — no point-cloud deliverable, so no scan file and no preview
+        // (the deliverable is the plant/animal map + photos + report).
+        boolean cloudless = plan.missionType() == MissionType.CROP_HEALTH
+                || plan.missionType() == MissionType.WILDLIFE_SURVEY;
+
+        Path scan = null;
+        if (!cloudless) {
+            String sampleFile = switch (plan.sensorType()) {
+                case FIXED_3D -> "crude_fixed3d.las";
+                case FRONT_360_VERTICAL -> "detailed_front360.las";   // building full scan
+                case SPINNING_TILTED -> "detailed_spinning.las";      // landscape detail
+                case PLANT_INSPECT, WILDLIFE_CAM -> "crude_fixed3d.las"; // unreachable (cloudless)
+            };
+            Path sample = samplesDir.resolve(sampleFile);
+            scan = Files.createTempFile("skyscan-raw-", ".las");
+            Files.copy(sample, scan, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
 
         Path preview = null;
-        if (crude) {
+        if (crude && !cloudless) {
             Path samplePreview = samplesDir.resolve("crude_preview.png");
             preview = Files.createTempFile("skyscan-preview-", ".png");
             Files.copy(samplePreview, preview, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -167,6 +197,70 @@ public class StubDroneConnector implements DroneConnector {
             listener.onFlightLog(plan.missionId(), logFile);
         }
     }
+
+    @Override
+    public void startHoverTest(UUID checkId, double heightM, double durationS) {
+        // Simulated hover & dodge: climb, hold, one scripted approach at 90
+        // degrees (dodge -> clear), land. Mirrors the real agent's event stream.
+        hoverAbort = false;
+        new Thread(() -> {
+            try {
+                var l = listener;
+                java.util.function.BiConsumer<String, String> ev = (t, p) ->
+                        l.onDroneCheckEvent(checkId, t, p);
+                ev.accept("HOVER_EVENT", "{\"event\":\"PREFLIGHT\",\"heightM\":" + heightM + "}");
+                Thread.sleep(600);
+                ev.accept("HOVER_EVENT", "{\"event\":\"ARMING\"}");
+                Thread.sleep(600);
+                ev.accept("HOVER_EVENT", "{\"event\":\"CLIMB\",\"targetM\":" + heightM + "}");
+                double agl = 0;
+                long tEnd = System.currentTimeMillis() + (long) (durationS * 1000);
+                boolean dodged = false;
+                boolean holdSent = false;
+                while (System.currentTimeMillis() < tEnd && !hoverAbort) {
+                    agl = Math.min(heightM, agl + 0.25);
+                    String near = "null";
+                    String state = agl < heightM ? "CLIMB" : "HOLD";
+                    long into = (long) (durationS * 1000) - (tEnd - System.currentTimeMillis());
+                    if (into > 5000 && into < 9000) {
+                        double d = 3.0 - (into - 5000) / 4000.0 * 1.8;
+                        near = "{\"az\":90.0,\"dist\":" + String.format(java.util.Locale.US, "%.2f", d)
+                                + ",\"closing\":0.45}";
+                        if (!dodged && d < 2.0) {
+                            dodged = true;
+                            ev.accept("HOVER_EVENT",
+                                    "{\"event\":\"DODGE\",\"azimuthDeg\":90.0,\"distM\":"
+                                    + String.format(java.util.Locale.US, "%.2f", d)
+                                    + ",\"closingMps\":0.45}");
+                        }
+                        state = "DODGE";
+                    } else if (dodged && into >= 9000) {
+                        dodged = false;
+                        ev.accept("HOVER_EVENT", "{\"event\":\"CLEAR\",\"dodgeS\":4.0}");
+                    }
+                    if (!holdSent && agl >= heightM) {
+                        holdSent = true;
+                        ev.accept("HOVER_EVENT", "{\"event\":\"HOLD\",\"aglM\":" + heightM + "}");
+                    }
+                    ev.accept("HOVER_STATUS", "{\"state\":\"" + state + "\",\"aglM\":"
+                            + String.format(java.util.Locale.US, "%.2f", agl)
+                            + ",\"targetM\":" + heightM + ",\"nearest\":" + near
+                            + ",\"endsInS\":" + Math.max(0, (tEnd - System.currentTimeMillis()) / 1000) + "}");
+                    Thread.sleep(1000);
+                }
+                ev.accept("HOVER_EVENT", "{\"event\":\"LANDING\",\"reason\":\""
+                        + (hoverAbort ? "abort" : "duration complete") + "\"}");
+                Thread.sleep(1200);
+                ev.accept("HOVER_EVENT", "{\"event\":\"" + (hoverAbort ? "ABORTED" : "DONE") + "\"}");
+                hoverAbort = false;
+            } catch (Exception ignored) { }
+        }, "stub-hover").start();
+    }
+
+    private volatile boolean hoverAbort = false;
+
+    @Override
+    public void abortHoverTest(UUID checkId) { hoverAbort = true; }
 
     @Override
     public void requestSelfTest(UUID missionId) {

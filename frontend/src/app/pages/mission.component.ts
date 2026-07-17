@@ -5,14 +5,16 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
-import { Asset, HAPPY_PATH, Mission, MissionState, ScanAreaInfo, Telemetry } from '../core/models';
+import { Asset, HAPPY_PATH, Mission, MissionState, ScanAreaInfo, Site, Telemetry } from '../core/models';
 import { MapDrawComponent } from './map-draw.component';
+import { CropPanelComponent } from './crop-panel.component';
+import { WildlifePanelComponent } from './wildlife-panel.component';
 import { CloudEditorComponent } from '../viewer/cloud-editor.component';
 import { LasCloud, loadLas } from '../viewer/las-loader';
 
 @Component({
   standalone: true,
-  imports: [FormsModule, RouterLink, DecimalPipe, MapDrawComponent, CloudEditorComponent],
+  imports: [FormsModule, RouterLink, DecimalPipe, MapDrawComponent, CloudEditorComponent, CropPanelComponent, WildlifePanelComponent],
   template: `
     @if (mission(); as m) {
       <div class="head">
@@ -22,9 +24,16 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
             · <span class="badge" [class.amber]="m.scanMode === 'LANDSCAPE'" [class.cyan]="m.scanMode === 'STRUCTURE'">
               {{ m.scanMode === 'STRUCTURE' ? 'STRUCTURE · FRONT 360° VERTICAL' : 'LANDSCAPE · DOWNWARD ±30°' }}</span></p>
         </div>
-        @if (auth.isStaff && abortable()) {
-          <button class="btn-danger" (click)="abort()">Abort · return to home</button>
-        }
+        <div style="display:flex; gap:.6rem">
+          @if (auth.isStaff) {
+            <button class="mono" (click)="exportBundle()" [disabled]="exporting()">
+              {{ exporting() ? 'Exporting…' : 'Export bundle' }}
+            </button>
+          }
+          @if (auth.isStaff && abortable()) {
+            <button class="btn-danger" (click)="abort()">Abort · return to home</button>
+          }
+        </div>
       </div>
 
       <!-- flight-progress strip -->
@@ -38,14 +47,14 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
       </div>
       @if (m.lastError) { <p class="mono" style="color: var(--red)">{{ m.lastError }}</p> }
 
-      @if (canRefine()) {
+      @if (canRefine() && isSurvey()) {
         <div class="card" style="margin-top:1rem">
           <h2>{{ isRescan() ? 'Rescan selector' : 'Detailed flight selector' }}
             <span class="badge cyan">{{ isRescan() ? 'send the drone back' : 'step 2 of 2' }}</span></h2>
           <p class="dim">{{ isRescan()
             ? 'Select the area to re-scan directly on the DELIVERED point cloud (or on the map) — the drone flies back, scans it, and the new pass is merged into the deliverable.'
             : 'Select the detail zone on the crude point cloud or on the map below — the two stay in sync. Then plan the route and launch.' }}</p>
-          @if (crudeCloud(); as c) {
+          @if (isSurvey() && crudeCloud(); as c) {
             <app-cloud-editor [cloud]="c" [crs]="crudeCrs()"
               [zoneGeoJson]="detailPolygon()"
               [routeGeoJson]="detailRoute()"
@@ -80,14 +89,22 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
 
         <div class="side">
           <!-- field preview + refine -->
-          @if (previewUrl()) {
+          @if (isSurvey() && previewUrl()) {
             <div class="card">
               <h2>Field preview <span class="badge amber">crude pass</span></h2>
               <img [src]="previewUrl()" alt="Downsampled preview of the crude scan" class="preview">
             </div>
           }
 
-          @if (canRefine()) {
+          @if (isCrop()) {
+            <app-crop-panel [mission]="m" [center]="[siteLat(), siteLon()]" />
+          }
+
+          @if (isWildlife()) {
+            <app-wildlife-panel [mission]="m" [center]="[siteLat(), siteLon()]" />
+          }
+
+          @if (canRefine() && isSurvey()) {
             <div class="card">
               <h2>Detailed pass <span class="badge cyan">plan &amp; launch</span></h2>
               <div class="field"><label for="mode2">Mounted payload / scan mode</label>
@@ -167,7 +184,9 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
             </div>
           }
 
-          <!-- deliverables -->
+          <!-- deliverables (point-cloud assets — survey missions only; crop/wildlife
+               deliver via their panels: map + photos + report) -->
+          @if (isSurvey()) {
           <div class="card">
             <h2>Deliverables</h2>
             @for (a of assets(); track a.id) {
@@ -184,6 +203,7 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
               <p class="dim">{{ m.state === 'PROCESSING' ? 'Processing in the C++ engine…' : 'Nothing delivered yet.' }}</p>
             }
           </div>
+          }
 
           @if (photos().length) {
             <div class="card">
@@ -240,6 +260,22 @@ import { LasCloud, loadLas } from '../viewer/las-loader';
   `],
 })
 export class MissionComponent implements OnInit, OnDestroy {
+  exporting = signal(false);
+
+  async exportBundle(): Promise<void> {
+    const mi = this.mission();
+    if (!mi) return;
+    this.exporting.set(true);
+    try {
+      await this.api.exportMission(mi.id, mi.name);
+    } catch (e) {
+      alert('Export failed — see console');
+      console.error(e);
+    } finally {
+      this.exporting.set(false);
+    }
+  }
+
   auth = inject(AuthService);
   private api = inject(ApiService);
   private id = inject(ActivatedRoute).snapshot.paramMap.get('id')!;
@@ -287,6 +323,12 @@ export class MissionComponent implements OnInit, OnDestroy {
     const t = this.telemetry();
     return t ? { lat: t.lat, lon: t.lon } : null;
   });
+  site = signal<Site | null>(null);
+  siteLat = computed(() => this.site()?.centerLat ?? 0);
+  siteLon = computed(() => this.site()?.centerLon ?? 0);
+  isCrop = computed(() => this.mission()?.missionType === 'CROP_HEALTH');
+  isWildlife = computed(() => this.mission()?.missionType === 'WILDLIFE_SURVEY');
+  isSurvey = computed(() => (this.mission()?.missionType ?? 'SURVEY_3D') === 'SURVEY_3D');
   canRefine = computed(() =>
     this.auth.isStaff && ['PREVIEW_READY', 'DETAIL_SELECTED', 'COMPLETE'].includes(this.mission()?.state ?? ''));
   isRescan = computed(() => this.mission()?.state === 'COMPLETE' || this.rescanArmed());
@@ -303,6 +345,8 @@ export class MissionComponent implements OnInit, OnDestroy {
   private async reload() {
     const res = await firstValueFrom(this.api.mission(this.id));
     this.mission.set(res.mission);
+    if (!this.site() && res.mission.siteId)
+      this.api.site(res.mission.siteId).subscribe(s => this.site.set(s));
     if (res.mission.scanMode) this.scanMode = res.mission.scanMode;
     this.areas.set(res.areas);
     const detail = (res.areas as ScanAreaInfo[]).find(a => a.passType === 'DETAILED');

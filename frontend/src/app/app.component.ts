@@ -12,6 +12,9 @@ import { AuthService } from './core/auth.service';
       <span class="dim mono">drone point-cloud service</span>
       <span class="spacer"></span>
       @if (auth.user(); as u) {
+        @if (u.role !== 'CUSTOMER') {
+          <a routerLink="/drone-check" class="mono">Drone check</a>
+        }
         <span class="mono dim">{{ u.displayName }} · <span class="badge" [class.amber]="u.role !== 'CUSTOMER'" [class.cyan]="u.role === 'CUSTOMER'">{{ u.role }}</span></span>
         <button (click)="auth.logout()">Sign out</button>
       }

@@ -33,6 +33,17 @@ public interface DroneConnector {
      */
     void requestSelfTest(UUID missionId);
 
+    /**
+     * GPS-free hover & dodge test (props ON, ~1 m): rise to heightM on the
+     * rangefinder, hold for durationS, dodge toward-moving obstacles, land.
+     * Progress arrives as HOVER_STATUS/HOVER_EVENT via onDroneCheckEvent
+     * keyed by checkId (the maintenance channel, not a mission).
+     */
+    void startHoverTest(UUID checkId, double heightM, double durationS);
+
+    /** Abort a running hover test (controlled landing). */
+    void abortHoverTest(UUID checkId);
+
     /** Backend subscribes exactly once at startup. */
     void setListener(DroneConnectorListener listener);
 

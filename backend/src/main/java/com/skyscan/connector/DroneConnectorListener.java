@@ -14,4 +14,10 @@ public interface DroneConnectorListener {
     void onSelfTestReport(UUID missionId, String reportJson);
     /** Full-detail JSONL flight log delivered after a flight. */
     void onFlightLog(UUID missionId, java.nio.file.Path logFile);
+
+    /** Drone-check channel (self-test page): hover test status/events. */
+    default void onDroneCheckEvent(UUID checkId, String type, String payloadJson) {}
+
+    /** WILDLIFE_SURVEY: one animal tagged DURING the pass (live stream). */
+    default void onLiveAnimalSighting(UUID missionId, String sightingJson) {}
 }

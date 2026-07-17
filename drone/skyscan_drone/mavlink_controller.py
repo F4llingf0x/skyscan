@@ -190,6 +190,40 @@ class MavlinkController:
                 return True
             time.sleep(0.2)
 
+    def arm(self, timeout_s: float = 20) -> None:
+        """Arm WITHOUT takeoff (no GPS/position estimate required in
+        GUIDED_NOGPS / ALT_HOLD class modes)."""
+        self.conn.mav.command_long_send(self.conn.target_system, self.conn.target_component,
+                                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
+                                        1, 0, 0, 0, 0, 0, 0)
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            if self.state.armed:
+                return
+            time.sleep(0.2)
+        raise TimeoutError("vehicle did not arm")
+
+    def disarm(self, force: bool = False) -> None:
+        self.conn.mav.command_long_send(self.conn.target_system, self.conn.target_component,
+                                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
+                                        0, 21196 if force else 0, 0, 0, 0, 0, 0)
+
+    def set_attitude_target(self, roll_deg: float, pitch_deg: float,
+                            yaw_rate_dps: float, thrust01: float) -> None:
+        """SET_ATTITUDE_TARGET — the GPS-free control path (GUIDED_NOGPS):
+        level-ish attitude + collective thrust, no position estimate needed.
+        type_mask 0b00000011 ignores body roll/pitch rates (we command the
+        attitude quaternion + yaw rate + thrust)."""
+        import math as _m
+        cr, sr = _m.cos(_m.radians(roll_deg) / 2), _m.sin(_m.radians(roll_deg) / 2)
+        cp, sp = _m.cos(_m.radians(pitch_deg) / 2), _m.sin(_m.radians(pitch_deg) / 2)
+        q = [cr * cp, sr * cp, cr * sp, -sr * sp]     # w,x,y,z (yaw 0 in body frame)
+        self.conn.mav.set_attitude_target_send(
+            0, self.conn.target_system, self.conn.target_component,
+            0b00000011,                                # ignore roll/pitch body rates
+            q, 0.0, 0.0, _m.radians(yaw_rate_dps),
+            max(0.0, min(1.0, thrust01)))
+
     def hold(self) -> None:
         """Brake to a hover (obstacle stop)."""
         self.set_mode("BRAKE")
@@ -208,22 +242,41 @@ class MavlinkController:
     # ---------------------------------------------------------- companion sensor injection
 
     def send_downward_range(self, dist_m: float) -> None:
-        """TFmini-S -> DISTANCE_SENSOR (downward): precise AGL + landing (10 cm..12 m)."""
+        """Downward TFmini-S -> DISTANCE_SENSOR: precise AGL + landing (10 cm..12 m)."""
         self.master.mav.distance_sensor_send(
             0, 10, 1200, int(dist_m * 100), mavutil.mavlink.MAV_DISTANCE_SENSOR_LASER,
             0, mavutil.mavlink.MAV_SENSOR_ROTATION_PITCH_270, 255)
 
-    def send_forward_obstacle(self, dist_m: float, max_m: float) -> None:
-        """Forward min-range from the lidar ring -> proximity for FC simple avoidance."""
+    def send_forward_range(self, dist_m: float, max_m: float) -> None:
+        """Forward TFmini-S -> DISTANCE_SENSOR (the C1's vertical ring is blind
+        along the nose; this sensor is the forward avoidance input)."""
         self.master.mav.distance_sensor_send(
             0, 30, int(max_m * 100), int(dist_m * 100),
             mavutil.mavlink.MAV_DISTANCE_SENSOR_LASER, 1,
             mavutil.mavlink.MAV_SENSOR_ROTATION_NONE, 255)
 
+    def send_ring_proximity(self, left_m: float, right_m: float, up_m: float,
+                            max_m: float) -> None:
+        """Vertical-ring wedge minima -> per-orientation DISTANCE_SENSOR for the
+        FC's proximity/simple-avoidance (PRX1_TYPE=2 consumes these). The
+        lateral rays are horizontal and tilt-immune (they lie on the tilt
+        axis); up covers climbs under overhangs. Fore/aft remain the forward
+        rangefinder's job."""
+        cap = int(max_m * 100)
+        for dist, orient, sid in (
+                (right_m, mavutil.mavlink.MAV_SENSOR_ROTATION_YAW_90, 2),
+                (left_m, mavutil.mavlink.MAV_SENSOR_ROTATION_YAW_270, 3),
+                (up_m, mavutil.mavlink.MAV_SENSOR_ROTATION_PITCH_90, 4)):
+            d = cap + 1 if dist == float("inf") else int(min(dist, max_m) * 100)
+            self.master.mav.distance_sensor_send(
+                0, 20, cap, d, mavutil.mavlink.MAV_DISTANCE_SENSOR_LASER,
+                sid, orient, 255)
+
     def send_obstacle_ring(self, sectors_m: list, max_m: float) -> None:
-        """Full 360° ring (72 x 5° sectors) -> OBSTACLE_DISTANCE, enabling the FC's
-        own path planning (ArduPilot BendyRuler: OA_TYPE=1) to route around
-        obstacles autonomously, underneath the companion's detour logic."""
+        """HORIZONTAL mount only: the full 360° ring (72 x 5° sectors) ->
+        OBSTACLE_DISTANCE, enabling the FC's own path planning (ArduPilot
+        BendyRuler, OA_TYPE=1) to route around obstacles autonomously,
+        underneath the companion's detour logic."""
         dists = [int(min(d, max_m) * 100) if d != float("inf") else int(max_m * 100) + 1
                  for d in sectors_m]
         self.master.mav.obstacle_distance_send(

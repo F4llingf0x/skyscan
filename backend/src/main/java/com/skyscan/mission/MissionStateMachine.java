@@ -24,8 +24,14 @@ public class MissionStateMachine {
         ALLOWED.put(AREA_SELECTED,           EnumSet.of(CRUDE_MISSION_UPLOADED, FAILED));
         ALLOWED.put(CRUDE_MISSION_UPLOADED,  EnumSet.of(CRUDE_FLYING, FAILED, RETURN_TO_HOME));
         ALLOWED.put(CRUDE_FLYING,            EnumSet.of(CRUDE_LANDED, RETURN_TO_HOME, FAILED));
-        ALLOWED.put(CRUDE_LANDED,            EnumSet.of(PREVIEW_READY, FAILED));
-        ALLOWED.put(PREVIEW_READY,           EnumSet.of(DETAIL_SELECTED, FAILED));
+        // PROCESSING directly from CRUDE_LANDED = single-pass mission types
+        // (e.g. WILDLIFE_SURVEY: animals move, so there is no detail pass).
+        ALLOWED.put(CRUDE_LANDED,            EnumSet.of(PREVIEW_READY, PROCESSING, FAILED));
+        // PREVIEW_READY -> CRUDE_MISSION_UPLOADED = detection-rescan loop:
+        // the operator sends the drone back over a sub-area to find plants the
+        // first pass missed; new detections MERGE into the existing map, and
+        // the loop repeats until the operator verifies coverage.
+        ALLOWED.put(PREVIEW_READY,           EnumSet.of(DETAIL_SELECTED, CRUDE_MISSION_UPLOADED, FAILED));
         ALLOWED.put(DETAIL_SELECTED,         EnumSet.of(DETAIL_MISSION_UPLOADED, FAILED));
         ALLOWED.put(DETAIL_MISSION_UPLOADED, EnumSet.of(DETAIL_FLYING, FAILED, RETURN_TO_HOME));
         ALLOWED.put(DETAIL_FLYING,           EnumSet.of(DETAIL_LANDED, RETURN_TO_HOME, FAILED));

@@ -5,6 +5,7 @@ import com.skyscan.repo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Component;
  * plus a sample site near Budapest so the whole flow is clickable immediately.
  */
 @Component
+@Order(10)   // base world first; DemoMissionSeeder (@Order(20)) builds on it
 public class DataSeeder implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);

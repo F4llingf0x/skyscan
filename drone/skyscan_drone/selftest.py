@@ -62,10 +62,14 @@ class SelfTestReport:
 
 
 class SelfTest:
-    def __init__(self, cfg, mav, lidar, tilt, rangefinder_last, camera, backend):
+    def __init__(self, cfg, mav, lidar, tilt, rangefinder_last, camera, backend,
+                 fwd_rangefinder_last=None, lidar_plane="vertical", vision=None):
+        self.lidar_plane = lidar_plane
+        self.vision = vision                              # (detector, classifier) | None
         self.cfg, self.mav, self.lidar, self.tilt = cfg, mav, lidar, tilt
-        self.rangefinder_last = rangefinder_last     # () -> (age_s, dist_m) | None
-        self.camera, self.backend = camera, backend
+        self.rangefinder_last = rangefinder_last         # () -> (age_s, dist_m) | None
+        self.fwd_rangefinder_last = fwd_rangefinder_last # forward unit: the ring is
+        self.camera, self.backend = camera, backend      # blind along the nose
 
     # ------------------------------------------------------------ suite
 
@@ -82,6 +86,8 @@ class SelfTest:
             rep.add(r)
         rep.add(self._lidar())
         rep.add(self._rangefinder())
+        rep.add(self._fwd_rangefinder())
+        rep.add(self._vision())
         rep.add(self._disk())
         if mode == "full":
             rep.add(self._tilt_sweep())
@@ -203,6 +209,49 @@ class SelfTest:
             return CheckResult("rangefinder", "PASS", v, "Downward TFmini-S healthy")
         return CheckResult("rangefinder", "WARN", v, "Rangefinder reading stale or implausible",
                            "IR sensor: bright sunlight on dark surfaces shortens range")
+
+    def _fwd_rangefinder(self) -> CheckResult:
+        # With the VERTICAL ring the nose TFmini-S is the ONLY forward sensor ->
+        # missing/silent is a FAIL (blocks takeoff). With the HORIZONTAL ring the
+        # lidar itself covers forward -> the TFmini-S is optional redundancy.
+        vertical = self.lidar_plane == "vertical"
+        if self.fwd_rangefinder_last is None:
+            if vertical:
+                return CheckResult("rangefinder_fwd", "FAIL", "not configured",
+                                   "No forward rangefinder — the vertical lidar ring is "
+                                   "blind along the nose; forward avoidance is inoperative",
+                                   "Fit + configure rangefinder.forward before autonomous flight")
+            return CheckResult("rangefinder_fwd", "PASS", "not fitted",
+                               "Horizontal ring covers forward; nose TFmini-S not fitted")
+        last = self.fwd_rangefinder_last()
+        if last is None:
+            return CheckResult("rangefinder_fwd", "FAIL" if vertical else "WARN", "no data",
+                               "Forward TFmini-S not reporting — forward avoidance blind"
+                               if vertical else
+                               "Forward TFmini-S fitted but silent (ring still covers forward)",
+                               "Check port/baud or TCA9548A channel; verify 5 V supply")
+        age, dist = last
+        v = f"{dist:.2f} m, {age*1000:.0f} ms ago"
+        if age < 2 and 0.1 < dist < 12.0:
+            return CheckResult("rangefinder_fwd", "PASS", v, "Forward TFmini-S healthy")
+        return CheckResult("rangefinder_fwd", "WARN", v,
+                           "Forward rangefinder stale or implausible",
+                           "IR sensor: bright sunlight on dark surfaces shortens range")
+
+    def _vision(self) -> CheckResult:
+        # CROP_HEALTH models: report the active backend. mock always passes;
+        # tensorrt PASS only if the engine actually loaded (constructor succeeds).
+        if self.vision is None:
+            return CheckResult("vision", "PASS", "n/a", "No CV models loaded (non-crop build)")
+        det, clf = self.vision
+        db = det.__class__.__name__.replace("PlantDetector", "")
+        cb = clf.__class__.__name__.replace("DiseaseClassifier", "")
+        v = f"detector={db}, classifier={cb}"
+        mock = "Mock" in det.__class__.__name__
+        if mock:
+            return CheckResult("vision", "PASS", v, "CV models = mock (SITL / no engine)",
+                               "Set vision.detector.backend=tensorrt with a built engine for real detection")
+        return CheckResult("vision", "PASS", v, "TensorRT CV engines loaded")
 
     def _disk(self) -> CheckResult:
         free_gb = shutil.disk_usage(self.cfg["output"]["scan_dir"]

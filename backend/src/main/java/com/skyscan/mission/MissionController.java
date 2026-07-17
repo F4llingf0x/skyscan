@@ -35,16 +35,23 @@ public class MissionController {
     private final StorageService storage;
     private final CurrentUser current;
     private final AcquisitionRepo acquisitions;
+    private final PlantRepo plants;
+    private final PlantFindingRepo plantFindings;
+    private final AnimalSightingRepo animalSightings;
     private final String targetCrs;
 
     public MissionController(MissionService service, MissionRepo missions, SiteRepo sites,
                              ScanAreaRepo scanAreas, MissionEventRepo events, ProcessingJobRepo jobs,
                              PointCloudAssetRepo assets, MissionEventPublisher publisher,
                              StorageService storage, CurrentUser current, AcquisitionRepo acquisitions,
+                             PlantRepo plants, PlantFindingRepo plantFindings,
+                             AnimalSightingRepo animalSightings,
                              @Value("${skyscan.processing.crs}") String targetCrs) {
         this.service = service; this.missions = missions; this.sites = sites; this.scanAreas = scanAreas;
         this.events = events; this.jobs = jobs; this.assets = assets; this.publisher = publisher;
         this.storage = storage; this.current = current; this.acquisitions = acquisitions;
+        this.plants = plants; this.plantFindings = plantFindings;
+        this.animalSightings = animalSightings;
         this.targetCrs = targetCrs;
     }
 
@@ -56,7 +63,12 @@ public class MissionController {
         Site site = sites.findById(req.siteId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found"));
         Mission m = service.createMission(site, req.name(), req.polygonGeoJson(),
-                req.altitudeM(), req.lineSpacingM(), req.speedMps(), req.scanMode());
+                req.altitudeM(), req.lineSpacingM(), req.speedMps(), req.scanMode(),
+                req.missionType(), req.cameraModule());
+        if (req.surveyEnvironment() != null && !req.surveyEnvironment().isBlank()) {
+            m.setSurveyEnvironment(req.surveyEnvironment());
+            missions.save(m);
+        }
         return MissionView.of(m);
     }
 
@@ -158,6 +170,77 @@ public class MissionController {
     }
 
     /** Most recent self-test report for this mission (persisted from the SELFTEST event). */
+    @PostMapping("/{id}/launch-inspection")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public MissionView launchInspection(@PathVariable UUID id,
+                                        @Valid @RequestBody LaunchInspectionRequest req) {
+        service.launchInspection(id, req.inspectAltM(), req.speedMps());
+        return MissionView.of(service.get(id));
+    }
+
+    @GetMapping("/{id}/plants")
+    public List<PlantView> plants(@PathVariable UUID id) {
+        Mission m = service.get(id);
+        current.checkSiteAccess(current.require(), m.getSite());
+        List<PlantView> out = new java.util.ArrayList<>();
+        for (Plant p : plants.findByMissionIdOrderByLabelAsc(id)) {
+            String photo = p.getPhotoObjectKey() == null ? null
+                    : storage.presignExternalGet(p.getPhotoObjectKey(), 30);
+            out.add(PlantView.of(p, plantFindings.findByPlantIdOrderBySeverityAsc(p.getId()), photo));
+        }
+        return out;
+    }
+
+    @GetMapping("/{id}/sightings")
+    public List<Map<String, Object>> sightings(@PathVariable UUID id) {
+        Mission m = service.get(id);
+        current.checkSiteAccess(current.require(), m.getSite());
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (var a : animalSightings.findByMissionIdOrderBySightedAtAsc(id)) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", a.getId()); row.put("label", a.getLabel());
+            row.put("species", a.getSpecies()); row.put("confidence", a.getConfidence());
+            row.put("lat", a.getLat()); row.put("lon", a.getLon());
+            row.put("sightedAt", a.getSightedAt().toString()); row.put("source", a.getSource());
+            row.put("bodyTempC", a.getBodyTempC());
+            row.put("photoUrl", a.getPhotoObjectKey() == null ? null
+                    : storage.presignExternalGet(a.getPhotoObjectKey(), 30));
+            out.add(row);
+        }
+        return out;
+    }
+
+    @PostMapping("/{id}/rescan-detection")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public MissionView rescanDetection(@PathVariable UUID id,
+                                       @Valid @RequestBody RescanDetectionRequest req) {
+        service.launchDetectionRescan(id, req.polygonGeoJson(), req.altitudeM(), req.speedMps());
+        return MissionView.of(service.get(id));
+    }
+
+    @PostMapping("/{id}/plants/{plantId}/excluded")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public List<PlantView> setExcluded(@PathVariable UUID id, @PathVariable UUID plantId,
+                                       @RequestBody ExcludeRequest req) {
+        service.setPlantExcluded(id, plantId, req.excluded());
+        return plants(id);
+    }
+
+    @PostMapping("/{id}/follow-up")
+    @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+    public MissionView followUp(@PathVariable UUID id, @RequestBody FollowUpRequest req) {
+        return MissionView.of(service.createFollowUp(id, req.name()));
+    }
+
+    @GetMapping("/{id}/report")
+    public Map<String, String> report(@PathVariable UUID id) {
+        Mission m = service.get(id);
+        current.checkSiteAccess(current.require(), m.getSite());
+        if (m.getReportObjectKey() == null)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No report yet");
+        return Map.of("reportUrl", storage.presignExternalGet(m.getReportObjectKey(), 30));
+    }
+
     @GetMapping("/{id}/self-test/latest")
     public Map<String, Object> latestSelfTest(@PathVariable UUID id) {
         checkedMission(id);

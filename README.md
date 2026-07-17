@@ -9,6 +9,16 @@ customer through an embedded web viewer.
 sits behind one interface backed by a simulated stub, so the entire lifecycle runs end-to-end
 on a laptop.
 
+> **Field/offline operation** (site LAN with a router, no internet, later
+> upload): see [`FIELD_DEPLOYMENT.md`](FIELD_DEPLOYMENT.md).
+
+> **Working on this project (humans and LLMs alike):** read
+> [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) first — it is the handoff file
+
+**Demos:** scripted walkthroughs for the crop-health and wildlife functions (seeded + live) are in [DEMO_GUIDE.md](DEMO_GUIDE.md).
+> describing architecture, hardware decisions and current state, and it
+> **must be updated with every change** (see the maintenance rule at its top).
+
 ## Run it
 
 ```bash

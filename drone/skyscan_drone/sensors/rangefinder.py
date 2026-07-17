@@ -1,9 +1,13 @@
-"""Downward TFmini-S ranging module: precise AGL heights up to ~10-12 m.
+"""TFmini-S ranging module (orientation-agnostic): one instance per unit.
 
-Feeds the flight controller as a downward DISTANCE_SENSOR for terrain-relative
-height, low-altitude terrain following, and gentle precise landings. With 12 m
-of range (vs the 4 m of small ToF chips) it is a genuine low-altitude altimeter,
-not just a touchdown sensor.
+Two units fly on this airframe:
+  down    — precise AGL, terrain following, gentle landings (the altimeter)
+  forward — the avoidance range along the nose: the C1's vertical ring is
+            blind fore/aft, so this sensor IS the forward obstacle input
+            (companion stop-and-hold + FC DISTANCE_SENSOR injection)
+
+With 12 m of range (vs the 4 m of small ToF chips) the TFmini-S is a genuine
+avoidance-class sensor, not just a touchdown probe.
 
 Two wiring modes (config `rangefinder.mode`):
   uart — factory default: 115200 8N1, 9-byte frames [0x59 0x59 dL dH sL sH tL tH ck]
@@ -29,7 +33,7 @@ TFMINI_I2C_ADDR = 0x10
 MAX_RANGE_M = 12.0
 
 
-class DownwardRangefinder:
+class TfMiniRangefinder:
     def __init__(self, cfg: dict, mux: I2CMux, publish):
         self.cfg, self.mux, self.publish = cfg, mux, publish
         self._running = False
@@ -43,7 +47,8 @@ class DownwardRangefinder:
 
     def start(self) -> None:
         self._running = True
-        threading.Thread(target=self._loop, daemon=True, name="tfmini-s").start()
+        threading.Thread(target=self._loop, daemon=True,
+                         name=f"tfmini-{self.cfg.get('name', 's')}").start()
 
     # ------------------------------------------------------------ acquisition
 
@@ -97,3 +102,7 @@ class DownwardRangefinder:
         self._running = False
         if self._serial:
             self._serial.close()
+
+
+# Backwards-compatible alias (pre-vertical-ring builds)
+DownwardRangefinder = TfMiniRangefinder

@@ -17,11 +17,20 @@ const VIEW_KEY = 'skyscan.dashboard.view';
         <h1>Sites</h1>
         <p class="dim">{{ auth.isStaff ? 'All customer sites.' : 'Your organization sites and deliverables.' }}</p>
       </div>
+      <div class="actions">
+        @if (auth.isStaff) {
+          <button class="mono" (click)="file.click()" [disabled]="importing()">
+            {{ importing() ? 'Importing…' : 'Import field bundle' }}
+          </button>
+          <input #file type="file" accept=".zip" hidden (change)="importBundle(file)" />
+        }
       <div class="toggle mono" role="group" aria-label="View mode">
         <button (click)="setView('tiles')" [class.btn-primary]="view() === 'tiles'">Tiles</button>
         <button (click)="setView('map')" [class.btn-primary]="view() === 'map'">Map</button>
       </div>
+      </div>
     </div>
+    @if (importMsg()) { <p class="mono dim">{{ importMsg() }}</p> }
 
     @if (view() === 'map') {
       <app-sites-map [sites]="sites()" (open)="openSite($event)" />
@@ -41,6 +50,7 @@ const VIEW_KEY = 'skyscan.dashboard.view';
   `,
   styles: [`
     .head { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
+    .actions { display: flex; gap: .6rem; align-items: start; }
     .toggle { display: flex; gap: 2px; }
     .toggle button { font-size: .72rem; padding: .35rem .9rem; }
     .toggle button:first-child { border-radius: 4px 0 0 4px; }
@@ -53,7 +63,29 @@ const VIEW_KEY = 'skyscan.dashboard.view';
 export class DashboardComponent {
   auth = inject(AuthService);
   private router = inject(Router);
+  private api = inject(ApiService);
   sites = toSignal(inject(ApiService).sites(), { initialValue: [] });
+  importing = signal(false);
+  importMsg = signal('');
+
+  importBundle(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.importing.set(true);
+    this.importMsg.set('');
+    this.api.importMission(file).subscribe({
+      next: r => {
+        this.importing.set(false);
+        this.importMsg.set(`Imported "${r.missionName}" (${r.objects} objects).`);
+        this.router.navigate(['/sites', r.siteId]);
+      },
+      error: e => {
+        this.importing.set(false);
+        this.importMsg.set(`Import failed: ${e.error?.message ?? e.statusText ?? e}`);
+      },
+    });
+  }
   view = signal<'tiles' | 'map'>(
     (localStorage.getItem(VIEW_KEY) as 'tiles' | 'map') ?? 'tiles');
 

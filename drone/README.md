@@ -20,30 +20,66 @@ SkyScan backend ── JetsonDroneConnector (DRONE_CONNECTOR=jetson)
    Pixhawk 6C Pro   RPLidar C1     TFmini-S · AS5600 · PCA9685→DS3218
 ```
 
-## How the two scan modes map to this hardware
+## Mount plane: `lidar.plane` — one switch, two airframes
 
-There is **one** lidar — the C1, a 2D scanner mounted with its plane
-**horizontal**: a 360° ring around the aircraft, tiltable ±30°. The tilt axis (DS3218 + AS5600 closed loop) *is* the
-payload mode switch:
+The same C1 can be built into the airframe two ways; everything downstream
+(assembler geometry, obstacle digests, FC injection, self-test severity)
+follows the single config switch `lidar.plane`:
 
-**Mounting decision (build-time): put the tilt on the ROLL axis** — the ring
-tips left/right, not fore/aft. Rays on the tilt axis don't move when tilting,
-so with roll mounting the fore/aft rays stay horizontal at any tilt angle:
-**forward obstacle avoidance is tilt-immune** (verified in the assembler unit
-test). Bonus: orbits are flown nose-forward along the tangent (efficient
-flight, facade on the tilted side), and orbit direction selects which slice
-faces the building — CW presents the up-tilted side, CCW the down-tilted side.
+| | `vertical` (default) | `horizontal` |
+|---|---|---|
+| Mount | nose, spin axis along body X | center, spin axis vertical |
+| Ring covers | up / right / down / left | full 360° at flight altitude |
+| Tilt (±30° about body Y) | + leans ring TOP toward the nose | + lifts the NOSE ray |
+| Scanning | pushbroom: facade floor-to-roof per sweep, wide terrain swath — few orbit levels/lines | narrow band at flight altitude — several× more levels/lines for the same coverage |
+| Avoidance | blind fore/aft → **forward TFmini-S REQUIRED** (self-test FAILs without it); sides/up from the ring | full horizontal ring → `OBSTACLE_DISTANCE` + BendyRuler; blind up/down; forward TFmini-S optional redundancy (fused via min) |
+| FC params | `PRX1_TYPE=2` (per-orientation DISTANCE_SENSOR) | `PRX1_TYPE=2` + optionally `OA_TYPE=1` (BendyRuler) |
+| Pick it when | the point cloud is the product (survey work) | cluttered sites where avoidance robustness beats survey speed |
+
+In both mounts the lateral rays lie on the tilt axis, so side ranging is
+tilt-immune. Switching planes is a config + rebuild-of-the-mount affair — no
+code changes; re-measure `lidar.mount.offset_m` and recalibrate
+`angle_zero_deg` (points UP in vertical, at the NOSE in horizontal).
+
+## How the two scan modes map to the DEFAULT (vertical) mount
+
+There is **one** lidar — the C1, a 2D scanner mounted at the NOSE with its
+spin axis along the body X axis: the 360° scan plane is **VERTICAL** (body
+Y-Z), covering up / right / down / left around the aircraft. The whole sensor
+pitches ±30° about the lateral axis (DS3218 + AS5600 closed loop) — positive
+tilt leans the **top of the ring toward the nose**. 3D comes from motion: the
+vertical fan is a pushbroom that the flight path sweeps through the scene.
+
+Two geometric facts drive everything downstream:
+
+1. **The lateral rays (±90°) lie ON the tilt axis**, so they stay exactly
+   horizontal at any tilt: side ranging and facade returns are tilt-immune
+   (verified in the assembler unit test).
+2. **The ring is blind along the nose and tail.** Forward obstacle sensing
+   comes from a dedicated forward TFmini-S (`rangefinder.forward`) — this is
+   a REQUIRED sensor, not an option. Tilt only buys steep look-ahead: +30°
+   sees up-and-forward (~60° elevation, wires/eaves above the path), −30°
+   sees down-and-forward (terrain rising into the path).
 
 **Tilt is FIXED for the whole flight** (mechanical constraint). It is set on
 the ground before takeoff, verified by the encoder, and carried as a mission
 parameter (`tiltDeg`) chosen by the operator per flight — which pairs with the
-rescan loop: fly a level pass first, then an upward-looking rescan of eaves,
-then a downward-looking one of roofs, each as its own flight.
+rescan loop: fly a vertical-ring pass first, then a +30° rescan of eaves and
+soffits from below, then a −30° one of roof planes, each as its own flight.
 
 | SkyScan mode | Tilt (fixed per flight) | Pattern | 3D from |
 |---|---|---|---|
-| Crude / LANDSCAPE | −30° preset (side of the ring swathes terrain) | lawnmower | swath × forward motion |
-| STRUCTURE detail | operator's choice: +30 / 0 / −30 | stacked orbits, nose-forward | ring × orbit levels; tilt selects the facade slice (level / up at eaves / down at roofs) |
+| Crude / LANDSCAPE | −30° preset (bottom of ring leans forward: terrain profile + look-ahead) | lawnmower, nose-forward | vertical fan × forward motion (pushbroom swath: ground below + both sides, width ≈ 2·√(range²−AGL²)) |
+| STRUCTURE detail | operator's choice: 0 / +30 / −30 | stacked orbits, nose-forward along the tangent | facade sits ABEAM, inside the scan plane — painted floor-to-roof every sweep; orbit motion provides the horizontal sweep, orbit levels extend coverage past lidar range on tall structures |
+
+Why tangent (nose-forward) orbits and not nose-in: the scan plane is
+perpendicular to the nose, so pointing the nose AT the facade would put the
+wall parallel to the plane — never intersected. Flown tangent, the wall sits
+abeam where the ring slices it vertically, and ArduPilot's default GUIDED yaw
+(nose at the next waypoint) produces this for free. Orbit direction selects
+which side faces the building, and the level spacing can be generous: each
+level covers a facade band of ±√(max_range² − standoff²) around flight
+altitude (≈ ±9 m at 8 m standoff with the C1's 12 m range).
 
 Every lidar measurement is georeferenced with the **time-interpolated** vehicle
 pose (GLOBAL_POSITION_INT + ATTITUDE at 10/20 Hz) and the **measured** encoder
@@ -61,29 +97,37 @@ is the hard floor beneath which the drone lands regardless.
 
 ## Object avoidance — layered and fully autonomous
 
-No operator action at any stage:
+No operator action at any stage. The sensor split follows the ring geometry:
+**forward** = nose TFmini-S (the ring can't see there), **sides/up/down** =
+the ring's wedge minima (lateral wedges tilt-immune), **down** = the altimeter
+TFmini-S.
 
-1. **Flight controller layer** — the full 360° lidar ring streams to the FC as
-   `OBSTACLE_DISTANCE`; with path planning enabled (`OA_TYPE=1` BendyRuler,
-   `AVOID_ENABLE=7`, `PRX1_TYPE=2`) the FC curves GUIDED paths around
-   obstacles on its own — most encounters never reach layer 2, and this works
-   even if the companion process dies.
-2. **Companion layer** — stop-and-hold with hysteresis: inside
-   `stop_distance_m` → BRAKE + `OBSTACLE_STOP` event; auto-resume after 3 s
-   continuously clear beyond `resume_clear_m`.
+1. **Flight controller layer** — forward rangefinder + ring wedge minima
+   stream to the FC as per-orientation `DISTANCE_SENSOR` (fwd / left / right /
+   up / down); with `AVOID_ENABLE=7`, `PRX1_TYPE=2` the FC brakes and backs
+   off on its own — and this works even if the companion process dies.
+2. **Companion layer** — stop-and-hold with hysteresis: forward return inside
+   `stop_distance_m`, or a side return inside `lateral_stop_m` (corridor
+   guard), → BRAKE + `OBSTACLE_STOP` event; auto-resume after 3 s continuously
+   clear beyond `resume_clear_m`.
 3. **Escalation: detour + scan.** A hold persisting past `detour_after_s`
-   means a static, unexpected object. The companion locates it (nearest-return
-   bearing/distance × pose), flies an arc around it at a safe radius **with
-   capture running — so the obstacle itself is scanned into the deliverable**
-   — exits on the far side and rejoins the planned route. Events:
-   `OBSTACLE_DETOUR`, `OBSTACLE_SCAN_START/DONE`.
+   means a static, unexpected object. The companion locates it (blocking
+   sensor's body bearing × range × pose), flies an arc around it at a safe
+   radius **nose along the tangent — so the object sits abeam, inside the
+   vertical scan plane, and is scanned into the deliverable** — exits on the
+   far side and rejoins the planned route. Events: `OBSTACLE_DETOUR`,
+   `OBSTACLE_SCAN_START/DONE`.
 4. **Geometry layer** — routes stand off the structure; the geofence
    (mission polygon + margin) is checked onboard at every waypoint, detours
    included.
 
-**Stated honestly:** the horizontal ring gives all-around coverage *at flight
-altitude*; the blind axes are **up and down**. The downward TFmini-S covers
-below; add an upward ToF before flying under canopies, eaves or wires.
+**Stated honestly:** with one forward rangefinder the forward coverage is a
+narrow beam, not a cone — thin obstacles (wires, branches) off-axis can be
+missed. Keep cruise speed modest near structures, use the −30° tilt's
+forward-down look-ahead on terrain-following passes, and see the gap list:
+a second forward unit angled up, or a small solid-state forward lidar,
+widens the cone cheaply. The tail is blind: the executor never commands
+backward translation, and BRAKE holds position rather than reversing.
 
 ## Hardware gap analysis — what the build is still missing
 
@@ -112,10 +156,12 @@ Must-have for fully automated flight:
    the FC + battery sensing, a dedicated regulated rail for the Jetson, and a
    strictly separate rail for the tilt servo. Leg planning is only as good as
    the fuel gauge — the PM02D's current sensing is what feeds it.
-5. **Lateral + upward obstacle sensing** — the C1 covers forward only. Add
-   4–6 **TF-Luna/TFmini-S** (8–12 m, I2C — your TCA9548A absorbs them) around
-   the airframe plus one **upward**, feeding `OBSTACLE_DISTANCE`; or one
-   depth camera (OAK-D/RealSense) forward-up if Jetson compute budget allows.
+5. **Forward obstacle sensing** — the vertical ring covers up, down and both
+   sides but is blind along the nose: the forward **TFmini-S**
+   (`rangefinder.forward`, on the TCA9548A) is REQUIRED for autonomous
+   flight — the pre-flight self-test FAILs without it. It is a narrow beam;
+   for a wider forward cone add a second unit angled ~15° up (wires/eaves)
+   or a depth camera (OAK-D/RealSense) if Jetson compute budget allows.
    The downward TFmini-S (12 m) is an altimeter/landing sensor, not avoidance.
 6. **Remote ID module** — regulatory requirement (EU class marking / US Part 89).
 7. **Anti-collision strobe** + FC buzzer/safety switch (6C Pro kit).
@@ -132,6 +178,33 @@ Strongly recommended:
 11. **NVMe SSD** on the Jetson for scan sessions; SD cards die.
 12. **Vibration-isolated sensor mount** — lidar + camera + encoder on one rigid,
     damped plate; calibrate extrinsics (`lidar.mount` in config) *after* build.
+
+## Firmware: ArduPilot vs PX4 — the decision
+
+The agent targets **ArduPilot Copter** (`mavlink.vehicle: arducopter`), and
+for this architecture that is the right call, not just the default:
+
+- The companion plans, the FC executes: GUIDED-mode position/velocity targets,
+  DO_CHANGE_SPEED, BRAKE, RTL — all first-class and battle-tested in ArduCopter
+  for close-quarters multirotor work. This code uses exactly that surface.
+- Proximity + simple avoidance (`PRX1_TYPE=2`, `AVOID_ENABLE=7`) consume the
+  per-orientation DISTANCE_SENSOR stream directly — the FC keeps braking on
+  obstacles even if the Jetson process dies (two independent safety brains).
+- RTK integration (u-blox, Unicore, NMEA rovers), rangefinder handling,
+  fences, battery failsafes and resume-friendly behaviors are mature and
+  well-documented.
+- BRAKE mode as an obstacle-hold primitive has no equally crisp PX4
+  equivalent (PX4 HOLD exists, but mode semantics and the mode-switch API
+  differ enough that `mavlink_controller.py` would need a PX4 backend).
+
+**When PX4 would earn its keep:** if avoidance and trajectory generation move
+fully onto the Jetson (ROS 2 + microDDS, offboard setpoint streaming at
+50–100 Hz) with the FC as a thin executor. That is a different architecture —
+more capable in GNSS-denied/SLAM territory, and more work. Nothing in the
+SkyScan boundary precludes migrating later: the backend contract
+(`DroneConnector`) and the scan pipeline are firmware-agnostic; only
+`mavlink_controller.py` (mode names, arming, avoidance parameters) and the
+bring-up parameter list would change.
 
 ## GNSS options, honestly ranked (4S budget build)
 
@@ -179,8 +252,10 @@ headroom per regulator.
   if the Jetson dies mid-flight. The companion only ever *adds* conservatism.
 - **Energy margins are design inputs**: plan legs to 60 % of usable capacity,
   RTL at 30 %, hard land at 18 %; wind and cold eat the rest.
-- **Nose-in orbits**: yaw follows the route tangent-to-target so the vertical
-  scan plane faces the facade *and* the avoidance sensor faces the danger.
+- **Tangent orbits, nose-forward**: the scan plane is perpendicular to the
+  nose, so the facade must sit ABEAM to be swept — and nose-forward flight
+  also points the forward rangefinder along the direction of travel, where
+  the danger is.
 - **CG and mass budget**: the tilt assembly + Jetson + LTE + RTK add ~600–900 g
   forward; size motors/props for ≥2:1 thrust at MTOW *with* the payload, and
   keep the battery tray adjustable to trim CG per configuration.
@@ -197,8 +272,12 @@ headroom per regulator.
 ## Bring-up checklist
 
 1. Flash ArduPilot Copter on the 6C Pro; set `SERIAL2_PROTOCOL=2`,
-   `SERIAL2_BAUD=921`, `AVOID_ENABLE=7`, `PRX1_TYPE=2`, `RNGFND1_TYPE=10`
-   (MAVLink), battery failsafes, fence.
+   `SERIAL2_BAUD=921`, `AVOID_ENABLE=7`, `PRX1_TYPE=2` (MAVLink proximity:
+   consumes the per-orientation DISTANCE_SENSOR stream), `RNGFND1_TYPE=10`
+   (MAVLink, downward), battery failsafes, fence. Note: BendyRuler path
+   planning (`OA_TYPE=1`) is optional now — with a single forward beam the
+   FC lacks the wide horizontal scan it plans best with; simple avoidance
+   (brake/backoff) plus the companion detour is the honest configuration.
 2. Jetson: `pip install -r requirements.txt`, copy `config.yaml` →
    `/etc/skyscan/`, install `systemd/skyscan-drone.service`.
 3. Backend: set `DRONE_CONNECTOR=jetson` — nothing else changes.

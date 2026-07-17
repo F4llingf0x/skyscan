@@ -25,12 +25,23 @@ flight:
 
 lidar:
   port: /dev/ttyUSB0                     # RPLidar C1
+  # Mount plane — pick per airframe build:
+  #   vertical   (default) survey-optimal: sensor at the NOSE, spin axis along
+  #              body X; the ring covers up/right/down/left. Pushbroom passes,
+  #              facades painted floor-to-roof on tangent orbits. Blind
+  #              fore/aft -> rangefinder.forward is REQUIRED (self-test FAILs).
+  #   horizontal avoidance-optimal: sensor at the CENTER, spin axis vertical;
+  #              full 360° obstacle ring at flight altitude (OBSTACLE_DISTANCE,
+  #              BendyRuler-capable). Scanning needs several× more orbit
+  #              levels/lines; blind up/down. Forward TFmini-S optional.
+  plane: vertical
   scan_hz: 10
   max_range_m: 12.0
+  angle_zero_deg: 0.0                    # encoder angle pointing UP (vertical) / at the NOSE (horizontal)
+  wedge_half_deg: 25                     # half-width of the up/down/left/right min-range wedges
   mount:                                  # sensor -> body extrinsics (measure after build!)
     offset_m: [0.12, 0.0, -0.03]         # x fwd, y right, z down from IMU
-    tilt_zero_deg: 0.0                   # encoder reading at optically level
-    tilt_axis: roll                      # roll (recommended: fore/aft rays stay level) | pitch
+    tilt_zero_deg: 0.0                   # encoder reading with the ring optically vertical
 
 tilt:
   pca9685_channel: 0
@@ -39,31 +50,114 @@ tilt:
   min_deg: -30.0
   max_deg: 30.0
   settle_tolerance_deg: 0.4
-  # scan-mode presets
-  # Tilt is FIXED for the whole flight (mechanical constraint). These are the
-  # defaults when the mission plan does not carry an explicit tiltDeg.
-  landscape_deg: -30.0                   # side of the ring swathes the terrain (roll mount)
-  structure_deg: 0.0                     # level ring at flight altitude; +/-30 selectable per flight
+  # scan-mode presets — tilt = PITCH about body Y, FIXED for the whole flight
+  # (mechanical constraint); defaults when the plan carries no explicit tiltDeg.
+  # Lateral rays lie ON the tilt axis in both mounts: side ranging is tilt-immune.
+  # vertical plane:  + leans the TOP of the ring toward the nose.
+  #   landscape -30: bottom of ring leans forward (terrain + fwd-down look-ahead)
+  #   structure   0: facade abeam painted floor-to-roof (+30 eaves / -30 roofs)
+  # horizontal plane: + lifts the NOSE ray.
+  #   landscape -30: forward slice profiles the terrain ahead-below
+  #   structure   0: level ring bands the facade at flight altitude per orbit level
+  landscape_deg: -30.0
+  structure_deg: 0.0
 
 rangefinder:
-  # Downward TFmini-S (0.1..12 m). mode: uart (factory default) or i2c
-  mode: uart
-  port: /dev/ttyTHS2
-  baud: 115200
-  mux_channel: 0                         # used only in i2c mode (TCA9548A channel)
-  publish_hz: 20
+  down:                                  # TFmini-S altimeter (0.1..12 m): AGL + landing
+    name: down
+    mode: uart                           # uart (factory default) or i2c
+    port: /dev/ttyTHS2
+    baud: 115200
+    mux_channel: 0                       # used only in i2c mode (TCA9548A channel)
+    publish_hz: 20
+  forward:                               # TFmini-S on the nose. lidar.plane=vertical:
+    enabled: true                        # REQUIRED (only forward sensor). horizontal:
+    name: forward                        # optional redundancy, fused (min) with the
+    mode: i2c                            # ring's forward wedge; set enabled: false
+    mux_channel: 1                       # to omit. Second unit on the TCA9548A (0x10).
+    publish_hz: 20
+
+hover_test:                              # GPS-FREE pre-flight hover & dodge test
+  max_height_m: 3.0                      # hard ceiling regardless of request
+  max_duration_s: 180
+  hover_thrust: 0.45                     # tune to your airframe's hover point
+  alt_kp: 0.12
+  alt_ki: 0.04
+  alt_kd: 0.18                           # climb-rate damping (prevents overshoot)
+  react_dist_m: 2.0                      # dodge when a closing obstacle is inside this
+  min_dist_m: 0.6                        # inside this: land immediately, never dodge
+  closing_mps: 0.15                      # minimum approach speed to count as "toward"
+  closing_window_s: 1.0                  # range-rate window (ghost-return rejection)
+  dodge_tilt_deg: 6.0                    # tilt away, capped
+  thrust_floor: 0.20
+  thrust_ceiling: 0.65
+  battery_floor_pct: 25
+  descent_rate_mps: 0.3
+
+inspection:                              # CROP_HEALTH per-plant visit (PLANT_INSPECT pass)
+  shots_per_plant: 3                     # close-ups per plant for the disease classifier
+  dwell_s: 2.0                           # hover time over each plant
+
+vision:                                  # on-board CV for CROP_HEALTH (pluggable)
+  detector:                              # crude pass: find every plant/tree
+    backend: mock                        # mock | tensorrt (set tensorrt on the drone)
+    engine_path: /opt/skyscan/models/plants.engine
+    conf_threshold: 0.35
+    classes: {0: CROP, 1: TREE}          # YOLO class id -> kind
+  aggregator:                            # frame detections -> georeferenced plants
+    # FOV comes from camera.module (or the mission's cameraModule override).
+    # Uncomment hfov_deg/vfov_deg ONLY for a custom lens not in the catalog:
+    # hfov_deg: 64.9
+    # vfov_deg: 51.0
+    merge_dist_m: 1.5                    # dedup radius across overlapping frames
+    min_hits: 1                          # min frames a plant must appear in
+    field_link_dist_m: 3.0               # crops closer than this are "connected"
+    field_min_plants: 25                 # connected crops >= this = one CROP_FIELD zone
+  animal_detector:                       # WILDLIFE_SURVEY: find animals in frames
+    backend: mock                        # mock | tensorrt (aerial-wildlife YOLO)
+    engine_path: /opt/skyscan/models/animals.engine
+    conf_threshold: 0.4
+    classes: {}                          # engine class id -> species name
+  tagger:                                # fusion + moving-target dedup + tagging
+    forest_thermal_conf: 0.6             # FOREST env: confidence of thermal-only tags
+    forest_merge_dist_m: 20.0            # FOREST env: canopy-gap re-glimpse merge radius
+    merge_dist_m: 12.0                   # same species within this AND...
+    merge_window_s: 90.0                 # ...this time window = same animal
+    fuse_dist: 0.08                      # RGB<->hotspot match radius (image units)
+    thermal_only_conf: 0.45              # confidence for warm-body-only sightings
+  classifier:                            # inspection pass: per-plant disease call
+    backend: mock                        # mock | tensorrt
+    engine_path: /opt/skyscan/models/disease.engine
+    conf_threshold: 0.5
+    mock_finding_rate: 0.35              # mock only: fraction of plants flagged
+
+thermal:                                 # FLIR Lepton 3.5 on PureThermal (UVC)
+  enabled: true                          # mock in SITL; real capture is a marked TODO
+  device: /dev/video1
+  min_temp_c: 28.0                       # animal body band (season-dependent)
+  max_temp_c: 42.0
+  min_blob_px: 4
 
 camera:
   enabled: true
+  # Selectable module — must match the physically mounted lens variant, since
+  # FOV drives plant-position projection. Catalog (sensors/camera_modules.py):
+  #   imx219-std (62.2°h) | imx219-77 (default) | imx219-120 (wide, degraded
+  #   mapping) | imx219-160 (fisheye — NOT for mapping)
+  # The operator can override per mission in the SkyScan planner.
+  module: imx219-77
   width: 3280
   height: 2464
+  hfov_deg: 64.9                         # derived from 77° diagonal on the 4:3 sensor
+  vfov_deg: 51.0                         # (footprint at 40 m AGL ≈ 51 × 38 m, 1.6 cm/px)
   interval_s: 2.5                        # photo cadence during detail pass
   session_dir: /var/lib/skyscan/photos
 
 avoidance:
-  stop_distance_m: 4.0                   # brake-and-hold threshold (forward sector)
+  stop_distance_m: 4.0                   # brake-and-hold threshold (forward TFmini-S)
   resume_clear_m: 6.0
-  sector_deg: 20                         # +/- around the nose in the horizontal ring
+  lateral_stop_m: 2.5                    # corridor guard on the ring's horizontal
+                                         # side rays (tilt-immune); 0 disables
   detour_after_s: 8                      # persistent block -> autonomous detour + obstacle scan
   detour_margin_m: 3.0                   # arc radius = stop_distance + this
 

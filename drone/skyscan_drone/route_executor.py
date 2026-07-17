@@ -26,12 +26,14 @@ class AbortedError(Exception):
 
 class RouteExecutor:
     def __init__(self, cfg, mav, safety, avoidance, assembler, tilt, camera, store, on_event,
-                 preflight_check=None):
+                 preflight_check=None, on_plant_images=None, on_crude_frame=None):
         self.cfg, self.mav, self.safety = cfg, mav, safety
         self.avoidance, self.assembler = avoidance, assembler
         self.tilt, self.camera, self.store = tilt, camera, store
         self.on_event = on_event
         self.preflight_check = preflight_check   # () -> (ok, [specific failures])
+        self.on_plant_images = on_plant_images   # (idx, [paths]) -> None (disease classifier feed)
+        self.on_crude_frame = on_crude_frame     # (path, pose, agl_m) -> None (plant detector feed)
         self.abort_requested = False
         self.resume_requested = False
 
@@ -51,6 +53,7 @@ class RouteExecutor:
         # Tilt is FIXED for the whole flight (set on the ground, verified by encoder).
         # The mission plan carries the operator-chosen angle; presets are the fallback.
         structure = mission["sensorType"] == "FRONT_360_VERTICAL"
+        self._inspect = mission["sensorType"] == "PLANT_INSPECT"
         preset = self.cfg["tilt"]["structure_deg"] if structure else self.cfg["tilt"]["landscape_deg"]
         tilt_target = float(mission.get("tiltDeg", preset))
         measured = self.tilt.move_to(tilt_target)
@@ -129,18 +132,67 @@ class RouteExecutor:
                 self.mav.resume_guided()
                 continue                      # retry the same waypoint from the new position
             if reached:
+                if getattr(self, "_inspect", False):
+                    # CROP_HEALTH: each waypoint IS a detected plant — hold and
+                    # shoot close-ups for the disease classifier. Battery swaps
+                    # between plants are handled by the leg loop below, so a
+                    # long plant list simply spans multiple packs.
+                    self._inspect_plant(idx)
                 idx += 1
                 self.store.save({"missionId": mission["missionId"], "passType": mission["passType"],
                                  "nextWp": idx, "leg": leg})
                 now = time.time()
-                if now - last_photo >= self.cfg["camera"]["interval_s"]:
+                if not getattr(self, "_inspect", False) and \
+                        now - last_photo >= self.cfg["camera"]["interval_s"]:
                     p = self.camera.capture()
                     last_photo = now
                     if p:
                         log.debug("photo %s", p)
+                        if self.on_crude_frame:
+                            try:
+                                agl = self._agl_m()
+                                self.on_crude_frame(p, self.mav.state.pose, agl)  # -> plant detector
+                            except Exception as e:
+                                log.warning("crude frame hook failed: %s", e)
                 if self.safety.battery_needs_swap():
                     return idx                       # leg ends here; caller handles swap
         return idx
+
+    def _inspect_plant(self, idx: int) -> None:
+        """Hold over a detected plant and capture a small burst of close-ups.
+        The lidar keeps assembling (canopy profile) throughout."""
+        cfg = self.cfg.get("inspection", {})
+        shots = int(cfg.get("shots_per_plant", 3))
+        dwell = float(cfg.get("dwell_s", 2.0))
+        self.on_event("PLANT_INSPECT", {"waypoint": idx, "shots": shots})
+        self.mav.hold()
+        t0 = time.time()
+        burst = []
+        while time.time() - t0 < dwell:
+            if self.abort_requested or self.safety.abort_reason():
+                break
+            if len(burst) < shots:
+                p = self.camera.capture()
+                if p:
+                    burst.append(p)
+                    log.debug("plant %d photo %s", idx, p)
+            time.sleep(max(0.2, dwell / max(1, shots)))
+        self.mav.resume_guided()
+        if self.on_plant_images and burst:
+            try:
+                self.on_plant_images(idx, burst)      # -> disease classifier
+            except Exception as e:
+                log.warning("plant %d classify hook failed: %s", idx, e)
+
+    def _agl_m(self) -> float:
+        """Above-ground height for projection: downward rangefinder if fresh,
+        else the FC's relative altitude."""
+        r = getattr(self, "agl_provider", None)
+        if r is not None:
+            v = r()
+            if v is not None:
+                return v
+        return self.mav.state.pose.alt_rel_m
 
     def _abort_or_hold(self) -> bool:
         """goto() poll: obstacle hold pauses translation; abort ends the leg."""

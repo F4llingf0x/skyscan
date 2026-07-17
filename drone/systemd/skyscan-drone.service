@@ -9,7 +9,6 @@ User=skyscan
 ExecStart=/usr/bin/python3 -m skyscan_drone.agent --config /etc/skyscan/config.yaml
 Restart=always
 RestartSec=3
-WatchdogSec=15
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

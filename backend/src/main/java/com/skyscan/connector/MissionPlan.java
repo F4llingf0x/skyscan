@@ -1,5 +1,6 @@
 package com.skyscan.connector;
 
+import com.skyscan.domain.MissionType;
 import com.skyscan.domain.PassType;
 import com.skyscan.domain.SensorType;
 import java.util.UUID;
@@ -13,6 +14,11 @@ public record MissionPlan(
         UUID missionId,
         PassType passType,
         SensorType sensorType,
+        MissionType missionType,
+        /** Mounted camera module id (drives on-board plant-projection FOV). */
+        String cameraModule,
+        /** WILDLIFE_SURVEY terrain (OPEN|FOREST) — forest = thermal-primary. */
+        String surveyEnvironment,
         String polygonGeoJson,
         double altitudeM,
         double lineSpacingM,

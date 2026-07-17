@@ -1,9 +1,12 @@
 """LiDAR tilt axis: DS3218 servo (via PCA9685 PWM) + AS5600 magnetic encoder
 (behind the TCA9548A) for closed-loop, degree-accurate positioning.
 
-The tilt IS the payload mode switch:
-  landscape/crude: plane tilted down (-30°) -> pushbroom terrain profiles
-  structure:       0° -> vertical scan plane sweeping facades while orbiting
+The tilt pitches the front-facing VERTICAL ring about the lateral axis
+(+ leans the top of the ring toward the nose) and IS the payload mode switch:
+  landscape/crude: -30° -> bottom of the ring leans forward: terrain
+                   profiling with forward-down look-ahead
+  structure:        0° -> plane vertical, facade abeam painted floor-to-roof
+                   (+30 eaves from below / -30 roof planes from above)
 The encoder reading is stamped into the scan stream so georeferencing uses the
 measured angle, not the commanded one.
 """

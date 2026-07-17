@@ -24,11 +24,50 @@ import { MapDrawComponent } from './map-draw.component';
           <h2>Crude pass parameters</h2>
           <div class="field"><label for="n">Mission name</label>
             <input id="n" name="n" [(ngModel)]="name"></div>
-          <div class="field"><label for="mode">Mounted payload / scan mode</label>
-            <select id="mode" name="mode" [(ngModel)]="scanMode">
-              <option value="LANDSCAPE">Landscape — downward ±30° tilt (terrain coverage)</option>
-              <option value="STRUCTURE">Structure — front-facing 360° vertical, ±30° (buildings, statues)</option>
+          <div class="field"><label for="mt">Mission type</label>
+            <select id="mt" name="mt" [(ngModel)]="missionType">
+              <option value="SURVEY_3D">3D survey — LiDAR point cloud (two-pass)</option>
+              <option value="CROP_HEALTH">Crop health — detect plants, then inspect for disease</option>
+              <option value="WILDLIFE_SURVEY">Wildlife survey — find and tag animals (RGB + thermal)</option>
             </select></div>
+          @if (missionType === 'SURVEY_3D') {
+            <div class="field"><label for="mode">Mounted payload / scan mode</label>
+              <select id="mode" name="mode" [(ngModel)]="scanMode">
+                <option value="LANDSCAPE">Landscape — downward ±30° tilt (terrain coverage)</option>
+                <option value="STRUCTURE">Structure — front-facing 360° vertical, ±30° (buildings, statues)</option>
+              </select></div>
+          } @else {
+            @if (missionType === 'CROP_HEALTH') {
+              <p class="mono dim">Crop health: the crude pass maps every crop plant and tree in
+                the polygon; you then review them and launch a per-plant disease inspection
+                (battery swaps between plants are handled automatically).</p>
+            } @else {
+              <p class="mono dim">Wildlife survey: a single coverage pass over the polygon —
+                the RGB and thermal cameras feed the on-board detector, and every animal is
+                tagged with species, time and location the moment it is found.</p>
+              <div class="field"><label for="env">Terrain</label>
+                <select id="env" name="env" [(ngModel)]="surveyEnvironment">
+                  <option value="OPEN">Open field — RGB + thermal fusion</option>
+                  <option value="FOREST">Forest — thermal-primary (canopy gaps)</option>
+                </select></div>
+              @if (surveyEnvironment === 'FOREST') {
+                <p class="mono dim">Under canopy, warm bodies glimpsed through gaps are the
+                  signal: thermal-only tags are treated as first-class and re-glimpses of the
+                  same animal merge. Fly at dawn/dusk for maximum thermal contrast; in
+                  deciduous forest, leaf-off season gives far better detection. Expect
+                  species to read "unidentified (warm body)" more often than in the open.</p>
+              }
+            }
+            <div class="field"><label for="cam">Mounted camera module</label>
+              <select id="cam" name="cam" [(ngModel)]="cameraModule">
+                <option value="imx219-77">IMX219 — 77° diagonal (default)</option>
+                <option value="imx219-std">IMX219 — stock lens (62.2° horizontal)</option>
+                <option value="imx219-120">IMX219 — 120° wide (degraded mapping accuracy)</option>
+                <option value="imx219-160">IMX219 — 160° fisheye (NOT for plant mapping)</option>
+              </select></div>
+            <p class="mono dim">Must match the physically mounted lens — the module's field of
+              view drives where detected plants are placed on the map.</p>
+          }
           <div class="field"><label for="alt">Altitude (m AGL)</label>
             <input id="alt" name="alt" type="number" [(ngModel)]="altitudeM"></div>
           <div class="field"><label for="ls">Line spacing (m)</label>
@@ -58,6 +97,9 @@ export class PlannerComponent {
   polygonGeoJson = signal('');
   name = 'Survey ' + new Date().toISOString().slice(0, 10);
   scanMode = 'LANDSCAPE';
+  missionType = 'SURVEY_3D';
+  cameraModule = 'imx219-77';
+  surveyEnvironment = 'OPEN';
   altitudeM = 80;
   lineSpacingM = 25;
   speedMps = 8;
@@ -66,11 +108,14 @@ export class PlannerComponent {
 
   async launch() {
     this.busy.set(true); this.error.set('');
+    if (this.missionType === 'CROP_HEALTH') this.scanMode = 'LANDSCAPE';
     try {
       const mission = await firstValueFrom(this.api.createMission({
         name: this.name, siteId: this.siteId, polygonGeoJson: this.polygonGeoJson(),
         altitudeM: this.altitudeM, lineSpacingM: this.lineSpacingM, speedMps: this.speedMps,
-        scanMode: this.scanMode,
+        scanMode: this.scanMode, missionType: this.missionType,
+        cameraModule: this.missionType !== 'SURVEY_3D' ? this.cameraModule : undefined,
+        surveyEnvironment: this.missionType === 'WILDLIFE_SURVEY' ? this.surveyEnvironment : undefined,
       }));
       await firstValueFrom(this.api.launchCrude(mission.id));
       this.router.navigate(['/missions', mission.id]);

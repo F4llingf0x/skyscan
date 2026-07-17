@@ -10,9 +10,24 @@ export type MissionState =
 
 export type ScanMode = 'LANDSCAPE' | 'STRUCTURE';
 
+export type MissionType = 'SURVEY_3D' | 'CROP_HEALTH' | 'WILDLIFE_SURVEY';
+export interface Sighting {
+  id: string; label: string; species: string; confidence: number;
+  lat: number; lon: number; sightedAt: string; source: 'RGB'|'THERMAL'|'FUSED';
+  bodyTempC?: number; photoUrl?: string;
+}
+export interface PlantFinding { diseaseId: string; diseaseName: string; severity: 'LOW'|'MEDIUM'|'HIGH'; confidence: number; }
+export interface Plant {
+  id: string; label: string; kind: 'CROP' | 'TREE' | 'CROP_FIELD'; lat: number; lon: number;
+  heightM: number; canopyDiaM: number; healthIndex: number; status: string;
+  excluded: boolean; photoUrl?: string; findings: PlantFinding[];
+}
 export interface Mission {
   id: string; name: string; siteId: string; siteName: string;
-  state: MissionState; scanMode: ScanMode; lastError?: string; createdAt: string; updatedAt: string;
+  state: MissionState; scanMode: ScanMode; missionType: MissionType; cameraModule?: string;
+  surveyEnvironment?: 'OPEN' | 'FOREST';
+  hasReport: boolean; parentMissionId?: string;
+  lastError?: string; createdAt: string; updatedAt: string;
 }
 export interface Telemetry {
   missionId: string; at: string; lat: number; lon: number; altM: number;

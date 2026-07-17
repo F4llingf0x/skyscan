@@ -59,9 +59,11 @@ class BackendClient:
     # ---------------------------------------------------------- scan + photo upload
 
     def upload_scan(self, mission_id: str, pass_type: str, sensor_type: str,
-                    scan_path: str, preview_path: str | None,
+                    scan_path: str | None, preview_path: str | None,
                     photo_paths: list[str], gnss_meta: dict) -> None:
-        files = [("scan", ("scan.las", open(scan_path, "rb"), "application/octet-stream"))]
+        files = []
+        if scan_path is not None:
+            files.append(("scan", ("scan.las", open(scan_path, "rb"), "application/octet-stream")))
         if preview_path:
             files.append(("preview", ("preview.png", open(preview_path, "rb"), "image/png")))
         for i, p in enumerate(photo_paths):
@@ -83,6 +85,65 @@ class BackendClient:
                 for _, (name, fh, _t) in files:
                     fh.seek(0)
         raise RuntimeError("scan upload failed permanently")
+
+    def upload_plants(self, mission_id: str, plants: list) -> bool:
+        """Detected plants (crude pass) -> backend, which stores them instead of
+        running its own stub detector. Best-effort with a few retries."""
+        return self._post_json(f"/internal/drone/missions/{mission_id}/plants",
+                               {"droneId": self.drone_id, "plants": plants},
+                               what="plants")
+
+    def upload_findings(self, mission_id: str, findings: list) -> bool:
+        """Per-plant disease findings (inspection pass) -> backend."""
+        return self._post_json(f"/internal/drone/missions/{mission_id}/findings",
+                               {"droneId": self.drone_id, "findings": findings},
+                               what="findings")
+
+    def upload_sightings(self, mission_id: str, sightings: list) -> bool:
+        """Full tagged-animal list (WILDLIFE_SURVEY) at landing."""
+        return self._post_json(f"/internal/drone/missions/{mission_id}/sightings",
+                               {"droneId": self.drone_id, "sightings": sightings},
+                               what="sightings")
+
+    def post_live_sighting(self, mission_id: str, sighting: dict) -> None:
+        """One sighting streamed DURING the pass — best effort, never blocks
+        the flight loop (single attempt, short timeout)."""
+        try:
+            self.session.post(f"{self.base}/internal/drone/missions/{mission_id}/sightings/live",
+                              json=sighting, timeout=5)
+        except Exception as e:
+            log.debug("live sighting post failed (will be in the landing upload): %s", e)
+
+    def upload_plant_photo(self, mission_id: str, plant_index: int, path: str) -> None:
+        self._post_file(f"/internal/drone/missions/{mission_id}/plants/by-index/{plant_index}/photo",
+                        path, "plant photo")
+
+    def upload_sighting_photo(self, mission_id: str, label: str, path: str) -> None:
+        self._post_file(f"/internal/drone/missions/{mission_id}/sightings/{label}/photo",
+                        path, "sighting photo")
+
+    def _post_file(self, url_path: str, file_path: str, what: str) -> None:
+        """Best-effort multipart upload (photos are evidence, not flight-critical)."""
+        try:
+            with open(file_path, "rb") as f:
+                r = self.session.post(f"{self.base}{url_path}",
+                                      files={"file": ("photo.jpg", f, "image/jpeg")}, timeout=60)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("%s upload failed (%s): %s", what, url_path, e)
+
+    def _post_json(self, path: str, body: dict, what: str) -> bool:
+        for attempt in range(10):
+            try:
+                r = self.session.post(f"{self.base}{path}", json=body, timeout=60)
+                r.raise_for_status()
+                log.info("%s uploaded for %s", what, path)
+                return True
+            except Exception as e:
+                log.warning("%s upload attempt %d failed: %s", what, attempt + 1, e)
+                time.sleep(min(30, 2 ** attempt))
+        log.error("%s upload failed permanently", what)
+        return False
 
     def upload_flight_log(self, mission_id: str, log_path: str) -> None:
         """Full-detail JSONL flight log -> mission page download."""

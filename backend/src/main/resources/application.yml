@@ -17,8 +17,8 @@ spring:
       request-timeout: 3600000   # SSE streams stay open
   servlet:
     multipart:
-      max-file-size: 512MB      # raw scans from the drone agent
-      max-request-size: 1024MB
+      max-file-size: 4096MB     # raw scans from the agent + field-export bundle imports
+      max-request-size: 4096MB
 
 management:
   endpoints:
@@ -54,3 +54,12 @@ skyscan:
     dir: ${SAMPLES_DIR:../sample-data}   # bundled sample scans used by the stub connector
   processing:
     crs: ${TARGET_CRS:EPSG:32634}
+  agri:
+    narrator:
+      # OPTIONAL off-flight LLM report narration. Disabled by default: with no
+      # endpoint the crop report shows only the structured catalog content.
+      # Any OpenAI-compatible /chat/completions endpoint (incl. a local server).
+      enabled: ${NARRATOR_ENABLED:false}
+      endpoint: ${NARRATOR_ENDPOINT:}
+      api-key: ${NARRATOR_API_KEY:}
+      model: ${NARRATOR_MODEL:gpt-4o-mini}

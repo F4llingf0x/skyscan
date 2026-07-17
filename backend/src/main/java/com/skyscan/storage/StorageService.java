@@ -87,6 +87,16 @@ public class StorageService {
     /** Presigned GET for the browser (viewer streaming / LAZ download). */
     public String presignExternalGet(String objectKey, int minutes) { return presign(externalClient, Method.GET, objectKey, minutes); }
 
+    /** Raw object stream (field-export bundling). Caller must close it. */
+    public InputStream download(String objectKey) {
+        try {
+            return internalClient.getObject(GetObjectArgs.builder()
+                    .bucket(bucket).object(objectKey).build());
+        } catch (Exception e) {
+            throw new RuntimeException("Download failed for " + objectKey, e);
+        }
+    }
+
     /** Object keys under a prefix (e.g. photos/{missionId}/), sorted. */
     public java.util.List<String> listKeys(String prefix) {
         java.util.List<String> keys = new java.util.ArrayList<>();
