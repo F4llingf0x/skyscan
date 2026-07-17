@@ -4,3 +4,4 @@ frontend/dist/
 engine/build/
 engine/third_party/
 *.log
+/frontend/.angular/
