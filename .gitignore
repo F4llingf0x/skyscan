@@ -1,7 +1,7 @@
-backend/target/
-frontend/node_modules/
-frontend/dist/
-engine/build/
-engine/third_party/
+ground-station/backend/target/
+ground-station/frontend/node_modules/
+ground-station/frontend/dist/
+ground-station/engine/build/
+ground-station/engine/third_party/
 *.log
-/frontend/.angular/
+/ground-station/frontend/.angular/

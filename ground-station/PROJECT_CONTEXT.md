@@ -6,7 +6,7 @@
 > the affected section(s) and the "Current state & change log" at the bottom.
 > If code and this file disagree, the code is right — fix this file.
 
-Last updated: 2026-07-17 (v21 — detection rescan loop + wildlife forest mode)
+Last updated: 2026-11-14 (v21.3 — repo split into ground-station/ + aerial-building-scanner/)
 
 ---
 
@@ -28,7 +28,7 @@ Jetson Orin Nano.
 ## 2. Repository map
 
 ```
-skyscan/
+skyscan/ground-station/   (repo root also holds ../aerial-building-scanner/)
 ├── frontend/          Angular 17 standalone app (nginx :4200, /api proxied)
 │   └── src/app/       pages/ (dashboard, sites-map, site, mission, planner,
 │                      asset-viewer, login, cloud-editor-demo), viewer/
@@ -48,7 +48,8 @@ skyscan/
 ├── engine/            C++17 point-cloud pipeline (:9090): clean, downsample,
 │                      georeference (STUB), SLAM/co-registration (STUB), merge,
 │                      LAS/LAZ/COPC writers; presigned GET/PUT, callback POST
-├── drone/             Jetson Orin Nano companion agent (Python 3.10+)
+├── (drone agent)      MOVED to ../aerial-building-scanner/legacy_drone_agent/ —
+│                      Jetson Orin Nano companion agent (Python 3.10+)
 │   ├── skyscan_drone/ agent.py (command loop, wiring), route_executor.py,
 │   │                  mavlink_controller.py (pymavlink, ArduPilot GUIDED),
 │   │                  scan_assembler.py (lidar→LAS georeferencing),
@@ -169,7 +170,7 @@ in MissionService and at the sensor-type switch in the drone route executor.
   (plant map + table, launch button, report link); GET /{id}/plants,
   GET /{id}/report.
   MODELS (v15): detection + classification run ON THE DRONE via pluggable
-  interfaces (drone/skyscan_drone/vision/). PlantDetector = YOLO→TensorRT
+  interfaces (legacy_drone_agent/skyscan_drone/vision/). PlantDetector = YOLO→TensorRT
   (impl stub, load/infer marked TODO) or mock; PlantAggregator does the REAL
   frame→world projection (camera FOV + AGL + yaw) + cross-frame dedup, turning
   boxes into georeferenced plants. DiseaseClassifier = CNN/ViT→TensorRT (stub)
@@ -201,7 +202,7 @@ behavior keyed off sensorType, and (optionally) a side panel component.
 ## 4. Drone hardware & the geometry decisions (IMPORTANT)
 
 Airframe: quad, 4S. FC: **Pixhawk 6C Pro, ArduPilot Copter** (decision made —
-see drone/README "Firmware" section; PX4 only if moving to full ROS 2 offboard
+see legacy_drone_agent/README "Firmware" section; PX4 only if moving to full ROS 2 offboard
 later; only mavlink_controller.py would change). Companion: **Jetson Orin
 Nano**. Lidar: **RPLidar C1** — 2D, 360°, 12 m, on a ±30° tilt axis
 (DS3218 servo + AS5600 encoder, closed loop; **tilt is FIXED per flight**,
@@ -260,13 +261,13 @@ nvgetty, add user to dialout. TELEM1 = SiK ground-station radio. USB only for
 bench setup, never for flight. Jetson power: own 12 V buck from battery
 (never the TELEM 5 V pin); tilt servo on its own isolated 6 V UBEC.
 
-### GNSS decision ladder (drone/README has the full table)
+### GNSS decision ladder (legacy_drone_agent/README has the full table)
 M8N (shake-down/crude only, metre-class smear) → Unicore UM980/UM982 (~€120–150,
 **recommended sweet spot**) or Quectel LC29H (~€40–60, bench-verify) → ZED-F9P
 (mature ecosystem). RTK corrections: NTRIP over LTE (Hungary: GNSSNET.hu or
 rtk2go). PPS→Jetson GPIO strongly recommended (10 ms @ 4 m/s = 4 cm smear).
 
-## 5. Key config (drone/config.yaml)
+## 5. Key config (legacy_drone_agent/config.yaml)
 
 backend{base_url, internal_token, poll_interval_s} · mavlink{device=/dev/ttyTHS1,
 baud=921600, vehicle=arducopter} · flight{cruise_speed_mps, waypoint_accept_radius_m,
@@ -284,7 +285,7 @@ target_crs=EPSG:32634}
 
 - Full stack, no hardware: `docker compose up --build` → UI :4200
   (operator/password), API :8080/swagger-ui.html, MinIO console :9001.
-- Drone agent in SITL: `drone/sitl/run_sitl.sh` (ArduPilot SITL) +
+- Drone agent in SITL: `legacy_drone_agent/sitl/run_sitl.sh` (ArduPilot SITL) +
   `SKYSCAN_MOCK_SENSORS=1 python3 -m skyscan_drone.agent --config config.yaml`
   with mavlink.device=udp:127.0.0.1:14550; backend env `DRONE_CONNECTOR=jetson`.
 - Mock sensors synthesize per-plane scenes (vertical: ground 5 m below +
@@ -300,7 +301,7 @@ target_crs=EPSG:32634}
 - `_utm34n` hardcodes UTM 34N (fits Hungary); generalize to `output.target_crs`.
 - Forward coverage is one narrow beam (vertical mount): consider a second
   TFmini angled up, or a depth camera, for wires/eaves.
-- Hardware still missing for real flight (drone/README gap list): RTK GNSS,
+- Hardware still missing for real flight (legacy_drone_agent/README gap list): RTK GNSS,
   RC link + failsafe (868 MHz in EU, not 915!), LTE backhaul, PM02D power
   module, Remote ID, strobe, PPS sync, vibration-isolated sensor plate.
 - Camera geotag EXIF is minimal; photo→facade association not implemented.
@@ -309,6 +310,12 @@ target_crs=EPSG:32634}
 
 ## 8. Current state & change log (append here — newest first)
 
+- **v21.3 (2026-11-14)**: REPO SPLIT. Everything here moved under
+  `ground-station/` (UI, backend, post-processing engine, sample data, compose,
+  docs); relative paths inside (compose, application.yml) are unchanged. The
+  drone agent moved to `../aerial-building-scanner/legacy_drone_agent/`, next to
+  the new Aerial Building Scanner project (digital twin, drone logic, tests).
+  Deploy paths such as /opt/skyscan/drone are unchanged.
 - **v21.2 (2026-07-17)**: Deliverables card gating restored. The v19 "hide
   point-cloud UI for non-survey missions" edit had only half-applied to the
   Deliverables card in mission.component.ts: the closing `}` was inserted but
@@ -546,7 +553,7 @@ target_crs=EPSG:32634}
   servo_speed/gear). `--max-deg` and `--gear-ratio` selectable per rig and
   drive the pulse mapping + estimator. `--mock` desk mode; `--seconds` gives
   a scripted run with pass/fail exit code. Documented in SETUP_MANUAL Stage 6.
-- **v12.1 (2026-07-16)**: added `drone/SETUP_MANUAL.md` (staged setup/run/
+- **v12.1 (2026-07-16)**: added `legacy_drone_agent/SETUP_MANUAL.md` (staged setup/run/
   verification manual). Fixes: removed stale `vl53l1x` from requirements.txt
   (TFmini-S needs only pyserial/smbus2); removed `WatchdogSec=15` from the
   systemd unit (agent sends no sd_notify pings — systemd would kill it every

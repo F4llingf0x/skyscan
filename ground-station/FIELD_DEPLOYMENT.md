@@ -48,7 +48,7 @@ office/central instance.
 
 | Dependency | Field answer |
 |---|---|
-| RTK corrections (NTRIP caster) | **Local base station**: second GNSS module in a surveyed/averaged position, corrections over the LAN or a radio link. Without it you fly M8N-grade (fine for crude passes; see drone/README GNSS ladder). |
+| RTK corrections (NTRIP caster) | **Local base station**: second GNSS module in a surveyed/averaged position, corrections over the LAN or a radio link. Without it you fly M8N-grade (fine for crude passes; see ../aerial-building-scanner/legacy_drone_agent/README GNSS ladder). |
 | Time sync (NTP) | GNSS disciplines the FC; enable PPS→Jetson for scan/pose stamping. The laptop's clock only affects log names — set it roughly right. |
 | Map tiles (mission planner) | See §4 — works tile-free, better with a local tile server. |
 | Dashboard world map | Decorative; degrades to site markers offline (built-in fallback). |
@@ -77,7 +77,7 @@ policy of whatever tile source you cache.
 
 ## 5. Fly and verify ON SITE
 
-Normal operation (see `drone/SETUP_MANUAL.md` Stage 9): plan → crude →
+Normal operation (see `../aerial-building-scanner/legacy_drone_agent/SETUP_MANUAL.md` Stage 9): plan → crude →
 preview → refine → detail → `PROCESSING` → `COMPLETE`. Everything — raw
 scans, preview, engine processing, LAS/LAZ/COPC deliverables, photos, flight
 logs — lands in the laptop's local Postgres + MinIO volumes. **Open the

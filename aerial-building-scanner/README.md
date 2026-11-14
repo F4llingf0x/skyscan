@@ -38,6 +38,7 @@ Jetson Orin Nano (companion computer), Pixhawk 6C with PX4, tilted 2D lidar, dep
 | `docs/` | Architecture, pipeline, sensors, roadmap, decision records. |
 | `config/` | Shared vehicle, sensor and mission parameters for sim and hardware. |
 | `ros2_ws/` | ROS 2 onboard real-time stack (Jetson Orin Nano). |
+| `legacy_drone_agent/` | Current working drone agent (Python, pymavlink/ArduPilot, sensors, safety, SITL), moved here from the old `drone/` folder. |
 | `offline/` | Post-flight trajectory refinement, reconstruction, colorization, export. |
 | `digital_twin/` | PX4 SITL + Gazebo simulation with ground truth. |
 | `evaluation/` | Metrics, scenario tests and benchmarks against ground truth. |
@@ -51,4 +52,4 @@ Jetson Orin Nano (companion computer), Pixhawk 6C with PX4, tilted 2D lidar, dep
 
 ## Status
 
-Scaffolding only; no implementation yet.
+Scaffolding only for the new stack; the existing Python drone agent lives in `legacy_drone_agent/`. The operator UI, backend and post-processing engine live in `../ground-station/`.
